@@ -1,0 +1,36 @@
+﻿# Real Maximo input reports
+Input/Qualification/*
+Input/Tasks/*
+
+# Generated Excel reports
+Output/*
+
+# Monthly archives
+Archive/*
+
+# Processing logs
+Logs/*
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
+*.tmp
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Python virtual environments
+.venv/
+venv/
+
+# VS Code local settings
+.vscode/
+
+# Keep empty folder structure
+!Input/Qualification/.gitkeep
+!Input/Tasks/.gitkeep
+!Output/.gitkeep
+!Archive/.gitkeep
+!Logs/.gitkeep
