@@ -12,6 +12,7 @@ Help develop and maintain the PM Qualification Activity Tracker in this private 
 4. Inspect `Config/qualification_mapping.csv`.
 5. Identify which task qualifications are currently available without opening or committing private data.
 6. Do not modify files until the requested task and current state are understood.
+7. DO NOT DELETE ANYTHING until i give you the order.
 
 ## Project Commands
 
