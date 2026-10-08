@@ -35,6 +35,11 @@ warnings.filterwarnings(
 
 
 def get_qualification_files():
+    files = [
+    file_path
+    for file_path in files
+    if "MOD0" not in file_path.stem.upper()
+]
     return sorted(
         [
             file_path

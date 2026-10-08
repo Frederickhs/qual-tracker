@@ -86,7 +86,12 @@ def qualification_from_filename(file_path, approved_codes):
 
 
 def read_qualifications(mapping):
-    files = excel_files(QUALIFICATION_FOLDER)
+    all_files = excel_files(QUALIFICATION_FOLDER)
+    files = [
+    file_path
+    for file_path in all_files
+    if "MOD0" not in file_path.stem.upper()
+]
     approved_codes = set(mapping["Qualification"])
     reports = []
     detected_codes = []

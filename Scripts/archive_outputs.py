@@ -12,6 +12,7 @@ OUTPUT_FILES = [
     "Wolf Qualification Tracker.xlsx",
     "Darkmoor Qualification Tracker.xlsx",
     "Unchained Qualification Tracker.xlsx",
+    "Animation Qualification Tracker.xlsx",
 ]
 
 
@@ -72,7 +73,7 @@ def main():
     files = existing_output_files()
 
     if not files:
-        print("No previous venue reports were found. Nothing to archive.")
+        print("No previous tracker reports were found. Nothing to archive.")
         return 0
 
     archive_output = create_unique_archive_folder()
@@ -82,7 +83,10 @@ def main():
     except PermissionError:
         print()
         print("ERROR: A previous output workbook is open or locked.")
-        print("Close all Wolf, Darkmoor, and Unchained output workbooks, then run again.")
+        print(
+            "Close all Wolf, Darkmoor, Unchained, and Animation "
+            "output workbooks, then run again."
+        )
         return 1
     except Exception as error:
         print()

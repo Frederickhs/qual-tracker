@@ -34,3 +34,6 @@ venv/
 !Output/.gitkeep
 !Archive/.gitkeep
 !Logs/.gitkeep
+
+# Private historical cycle evidence
+Data/*

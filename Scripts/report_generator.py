@@ -1,6 +1,8 @@
 from pathlib import Path
+import re
 import sys
 import time
+from cycle_history import apply_cycle_history, save_cycle_history
 
 import pandas as pd
 from openpyxl import Workbook
@@ -19,11 +21,14 @@ from cycle_processor import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OUTPUT_FOLDER = PROJECT_ROOT / "Output"
+MANUAL_ROSTER_FOLDER = PROJECT_ROOT / "Input" / "Manual roster"
+ANIMATION_ROSTER_FILE = MANUAL_ROSTER_FOLDER / "Animation Roster.xlsx"
 
 OUTPUT_FILES = {
     "Wolf": "Wolf Qualification Tracker.xlsx",
     "Darkmoor": "Darkmoor Qualification Tracker.xlsx",
     "Unchained": "Unchained Qualification Tracker.xlsx",
+    "Animation": "Animation Qualification Tracker.xlsx",
 }
 
 STATUS_STYLES = {
@@ -53,6 +58,138 @@ DISPLAY_COLUMNS = [
     "Cycle Result",
 ]
 
+ROSTER_EXCEPTION_COLUMNS = [
+    "Exception Type",
+    "Roster Name",
+    "SSO",
+    "Official Maximo Name",
+    "Details",
+]
+
+
+def normalize_sso(value):
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text
+
+
+def normalized_name_tokens(value):
+    if pd.isna(value):
+        return []
+
+    text = str(value).upper().replace("(UDX)", " ")
+    return sorted(re.findall(r"[A-Z0-9]+", text))
+
+
+def read_animation_roster(qualifications):
+    if not ANIMATION_ROSTER_FILE.exists():
+        raise ValueError(
+            "Animation roster was not found. Expected: "
+            f"{ANIMATION_ROSTER_FILE}"
+        )
+
+    roster = pd.read_excel(
+        ANIMATION_ROSTER_FILE,
+        engine="openpyxl",
+        dtype={"ID": "string", "Name": "string"},
+    )
+    roster.columns = [str(column).strip() for column in roster.columns]
+
+    required_columns = {"Name", "ID"}
+    missing_columns = required_columns.difference(roster.columns)
+    if missing_columns:
+        raise ValueError(
+            "Animation roster is missing columns: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    roster = roster.dropna(how="all").copy()
+    roster["Roster Name"] = roster["Name"].fillna("").astype(str).str.strip()
+    roster["SSO"] = roster["ID"].apply(normalize_sso)
+
+    official = qualifications[
+        qualifications["Qualification"] == "UCMOD4"
+    ].copy()
+    official_by_sso = {
+        str(row["SSO"]): row
+        for row in official.to_dict("records")
+    }
+
+    exceptions = []
+
+    for row_number, row in roster.iterrows():
+        if not row["SSO"]:
+            exceptions.append(
+                {
+                    "Exception Type": "Blank or invalid SSO",
+                    "Roster Name": row["Roster Name"],
+                    "SSO": "",
+                    "Official Maximo Name": "",
+                    "Details": f"Roster row {row_number + 2} has no usable ID.",
+                }
+            )
+
+    nonblank = roster[roster["SSO"] != ""].copy()
+    duplicate_mask = nonblank.duplicated(subset=["SSO"], keep=False)
+
+    for _, row in nonblank[duplicate_mask].iterrows():
+        exceptions.append(
+            {
+                "Exception Type": "Duplicate roster SSO",
+                "Roster Name": row["Roster Name"],
+                "SSO": row["SSO"],
+                "Official Maximo Name": "",
+                "Details": "The SSO appears more than once in Animation Roster.xlsx.",
+            }
+        )
+
+    unique_roster = nonblank.drop_duplicates(subset=["SSO"], keep="first")
+    matched_ssos = set()
+
+    for _, row in unique_roster.iterrows():
+        sso = row["SSO"]
+        official_row = official_by_sso.get(sso)
+
+        if official_row is None:
+            exceptions.append(
+                {
+                    "Exception Type": "SSO not found in UCMOD4",
+                    "Roster Name": row["Roster Name"],
+                    "SSO": sso,
+                    "Official Maximo Name": "",
+                    "Details": (
+                        "The roster SSO was not found in the official "
+                        "UCMOD4 qualification report."
+                    ),
+                }
+            )
+            continue
+
+        matched_ssos.add(sso)
+        official_name = str(official_row["Technician Name"])
+
+        if normalized_name_tokens(row["Roster Name"]) != normalized_name_tokens(
+            official_name
+        ):
+            exceptions.append(
+                {
+                    "Exception Type": "Roster name differs from Maximo",
+                    "Roster Name": row["Roster Name"],
+                    "SSO": sso,
+                    "Official Maximo Name": official_name,
+                    "Details": (
+                        "The official Maximo name is used in the generated report."
+                    ),
+                }
+            )
+
+    exception_frame = pd.DataFrame(exceptions, columns=ROSTER_EXCEPTION_COLUMNS)
+    return matched_ssos, exception_frame, len(unique_roster)
+
 
 def write_dataframe(worksheet, dataframe):
     worksheet.append(list(dataframe.columns))
@@ -61,7 +198,7 @@ def write_dataframe(worksheet, dataframe):
         worksheet.append(list(row))
 
 
-def format_table_sheet(worksheet, table_name):
+def format_table_sheet(worksheet, status_column="P"):
     worksheet.freeze_panes = "A2"
 
     header_fill = PatternFill("solid", fgColor="548235")
@@ -95,29 +232,30 @@ def format_table_sheet(worksheet, table_name):
         worksheet.column_dimensions[column].width = width
 
     for row in worksheet.iter_rows(min_row=2):
-        row[3].number_format = "@"
-        row[5].number_format = "m/d/yyyy"
-        row[8].number_format = "m/d/yyyy"
-        row[9].number_format = "m/d/yyyy"
-        row[11].number_format = "m/d/yyyy h:mm AM/PM"
-        row[12].alignment = Alignment(wrap_text=True, vertical="top")
+        if len(row) >= 16:
+            row[3].number_format = "@"
+            row[5].number_format = "m/d/yyyy"
+            row[8].number_format = "m/d/yyyy"
+            row[9].number_format = "m/d/yyyy"
+            row[11].number_format = "m/d/yyyy h:mm AM/PM"
+            row[12].alignment = Alignment(wrap_text=True, vertical="top")
 
     if worksheet.max_row >= 2:
         worksheet.auto_filter.ref = worksheet.dimensions
 
-        status_range = f"P2:P{worksheet.max_row}"
+        status_range = f"{status_column}2:{status_column}{worksheet.max_row}"
         for status, (fill_color, font_color) in STATUS_STYLES.items():
             worksheet.conditional_formatting.add(
                 status_range,
                 FormulaRule(
-                    formula=[f'$P2="{status}"'],
+                    formula=[f'${status_column}2="{status}"'],
                     fill=PatternFill("solid", fgColor=fill_color),
                     font=Font(color=font_color, bold=True),
                 ),
             )
 
 
-def create_dashboard(workbook, venue_data, venue):
+def create_dashboard(workbook, tracker_data, report_name):
     worksheet = workbook.active
     worksheet.title = "Dashboard"
     worksheet.sheet_view.showGridLines = False
@@ -127,7 +265,7 @@ def create_dashboard(workbook, venue_data, venue):
     worksheet["A1"].fill = PatternFill("solid", fgColor="1F4E78")
     worksheet.merge_cells("A1:D1")
 
-    worksheet["A2"] = f"{venue} Annual PM Compliance"
+    worksheet["A2"] = f"{report_name} Annual PM Compliance"
     worksheet["A2"].font = Font(size=12, bold=True)
     worksheet.merge_cells("A2:D2")
 
@@ -135,20 +273,25 @@ def create_dashboard(workbook, venue_data, venue):
     worksheet["B4"] = "Count"
 
     metrics = [
-        ("Total Cycles", len(venue_data)),
+        ("Total Cycles", len(tracker_data)),
         (
             "Good / Completed",
-            int((venue_data["Cycle Result"] == "Good / Completed").sum()),
+            int((tracker_data["Cycle Result"] == "Good / Completed").sum()),
         ),
-        ("Good", int((venue_data["Cycle Result"] == "Good").sum())),
-        ("Due Soon", int((venue_data["Cycle Result"] == "Due Soon").sum())),
+        ("Good", int((tracker_data["Cycle Result"] == "Good").sum())),
+        ("Due Soon", int((tracker_data["Cycle Result"] == "Due Soon").sum())),
         (
             "Requalification Needed",
-            int((venue_data["Cycle Result"] == "Requalification Needed").sum()),
+            int(
+                (
+                    tracker_data["Cycle Result"]
+                    == "Requalification Needed"
+                ).sum()
+            ),
         ),
         (
             "Task Data Missing",
-            int((venue_data["Cycle Result"] == "Task Data Missing").sum()),
+            int((tracker_data["Cycle Result"] == "Task Data Missing").sum()),
         ),
     ]
 
@@ -183,42 +326,83 @@ def create_dashboard(workbook, venue_data, venue):
     worksheet.column_dimensions["D"].width = 18
 
 
-def create_exceptions_sheet(workbook, venue_data):
+def create_exceptions_sheet(workbook, tracker_data):
     worksheet = workbook.create_sheet("Exceptions")
 
-    exceptions = venue_data[
-        (venue_data["Cycle Result"] == "Task Data Missing")
-        | (venue_data["Qualification Status"] != "ACTIVE")
+    exceptions = tracker_data[
+        (tracker_data["Cycle Result"] == "Task Data Missing")
+        | (tracker_data["Qualification Status"] != "ACTIVE")
     ][DISPLAY_COLUMNS].copy()
 
     if exceptions.empty:
-        worksheet["A1"] = "No exceptions found."
+        worksheet["A1"] = "No cycle or qualification exceptions found."
         worksheet["A1"].font = Font(bold=True)
         return
 
     write_dataframe(worksheet, exceptions)
-    format_table_sheet(worksheet, "ExceptionsTable")
+    format_table_sheet(worksheet)
 
 
-def create_run_summary(workbook, venue_data, venue):
+def create_roster_exceptions_sheet(workbook, roster_exceptions):
+    worksheet = workbook.create_sheet("Roster Exceptions")
+
+    if roster_exceptions.empty:
+        worksheet["A1"] = "No Animation roster exceptions found."
+        worksheet["A1"].font = Font(bold=True)
+        return
+
+    write_dataframe(worksheet, roster_exceptions)
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+
+    for cell in worksheet[1]:
+        cell.fill = PatternFill("solid", fgColor="C65911")
+        cell.font = Font(color="FFFFFF", bold=True)
+
+    worksheet.column_dimensions["A"].width = 32
+    worksheet.column_dimensions["B"].width = 28
+    worksheet.column_dimensions["C"].width = 14
+    worksheet.column_dimensions["D"].width = 31
+    worksheet.column_dimensions["E"].width = 65
+
+    for row in worksheet.iter_rows(min_row=2):
+        row[2].number_format = "@"
+        row[4].alignment = Alignment(wrap_text=True, vertical="top")
+
+
+def create_run_summary(
+    workbook,
+    tracker_data,
+    report_name,
+    roster_count=None,
+    matched_roster_count=None,
+):
     worksheet = workbook.create_sheet("Run Summary")
     worksheet.sheet_view.showGridLines = False
 
     rows = [
-        ("Venue", venue),
+        ("Report", report_name),
         ("Processing Date", TODAY.to_pydatetime()),
-        ("Qualification Records", venue_data[["SSO", "Qualification"]].drop_duplicates().shape[0]),
-        ("Annual Cycle Records", len(venue_data)),
-        ("Unique Technicians", venue_data["SSO"].nunique()),
+        (
+            "Qualification Records",
+            tracker_data[["SSO", "Qualification"]].drop_duplicates().shape[0],
+        ),
+        ("Annual Cycle Records", len(tracker_data)),
+        ("Unique Technicians", tracker_data["SSO"].nunique()),
         (
             "Qualifications",
-            ", ".join(sorted(venue_data["Qualification"].unique())),
+            ", ".join(sorted(tracker_data["Qualification"].unique())),
         ),
         (
             "Disciplines",
-            ", ".join(sorted(venue_data["Discipline"].unique())),
+            ", ".join(sorted(tracker_data["Discipline"].unique())),
         ),
     ]
+
+    if roster_count is not None:
+        rows.append(("Unique Animation Roster SSOs", roster_count))
+    if matched_roster_count is not None:
+        rows.append(("Matched Official UCMOD4 SSOs", matched_roster_count))
 
     for row_number, (label, value) in enumerate(rows, start=1):
         worksheet.cell(row=row_number, column=1, value=label)
@@ -226,61 +410,176 @@ def create_run_summary(workbook, venue_data, venue):
         worksheet.cell(row=row_number, column=1).font = Font(bold=True)
 
     worksheet["B2"].number_format = "m/d/yyyy"
-    worksheet.column_dimensions["A"].width = 28
+    worksheet.column_dimensions["A"].width = 34
     worksheet.column_dimensions["B"].width = 60
 
 
-def create_venue_workbook(results, venue, output_path):
-    venue_data = results[results["Venue"] == venue].copy()
-
+def create_tracker_workbook(
+    tracker_data,
+    report_name,
+    output_path,
+    roster_exceptions=None,
+    roster_count=None,
+    matched_roster_count=None,
+):
     workbook = Workbook()
-    create_dashboard(workbook, venue_data, venue)
+    create_dashboard(workbook, tracker_data, report_name)
 
     status_sheet = workbook.create_sheet("PM Status")
-    status_data = venue_data[DISPLAY_COLUMNS].copy()
+    status_data = tracker_data[DISPLAY_COLUMNS].copy()
     write_dataframe(status_sheet, status_data)
-    format_table_sheet(status_sheet, "PMStatusTable")
+    format_table_sheet(status_sheet)
 
-    create_exceptions_sheet(workbook, venue_data)
-    create_run_summary(workbook, venue_data, venue)
+    create_exceptions_sheet(workbook, tracker_data)
+
+    if roster_exceptions is not None:
+        create_roster_exceptions_sheet(workbook, roster_exceptions)
+
+    create_run_summary(
+        workbook,
+        tracker_data,
+        report_name,
+        roster_count=roster_count,
+        matched_roster_count=matched_roster_count,
+    )
 
     workbook.save(output_path)
 
 
 def main():
-    started = time.perf_counter()
+        started = time.perf_counter()
 
-    print("=" * 70)
-    print("PM Qualification Activity Tracker - Excel Report Generator")
-    print("=" * 70)
+        print("=" * 70)
+        print("PM Qualification Activity Tracker - Excel Report Generator")
+        print("=" * 70)
 
-    try:
-        mapping = load_mapping()
-        qualifications = read_qualifications(mapping)
-        tasks, qualifications_with_tasks = read_tasks()
-        cycles = build_cycles(qualifications)
-        results = assign_tasks_to_cycles(
-            cycles,
-            tasks,
-            qualifications_with_tasks,
+        try:
+            mapping = load_mapping()
+            qualifications = read_qualifications(mapping)
+
+            animation_ssos, roster_exceptions, roster_count = (
+                read_animation_roster(qualifications)
+            )
+
+            tasks, qualifications_with_tasks = read_tasks()
+            cycles = build_cycles(qualifications)
+
+            results = assign_tasks_to_cycles(
+                cycles,
+                tasks,
+                qualifications_with_tasks,
+            )
+
+            results, updated_history, history_stats = apply_cycle_history(
+                results
+            )
+
+        except Exception as error:
+            print(f"ERROR: {error}")
+            return 1
+
+        # Animation roster employees appear only in the Animation report.
+        # The Animation report evaluates only UCMOD4.
+        animation_data = results[
+            results["SSO"].astype(str).isin(animation_ssos)
+            & (results["Qualification"] == "UCMOD4")
+        ].copy()
+
+        animation_data["Venue"] = "Animation"
+
+        # Remove every Animation roster SSO completely from the normal reports.
+        standard_results = results[
+            ~results["SSO"].astype(str).isin(animation_ssos)
+        ].copy()
+
+        OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
+        standard_reports = {
+            "Wolf": standard_results[
+                standard_results["Venue"] == "Wolf"
+            ].copy(),
+            "Darkmoor": standard_results[
+                standard_results["Venue"] == "Darkmoor"
+            ].copy(),
+            "Unchained": standard_results[
+                standard_results["Venue"] == "Unchained"
+            ].copy(),
+        }
+
+        try:
+            for report_name, report_data in standard_reports.items():
+                filename = OUTPUT_FILES[report_name]
+
+                create_tracker_workbook(
+                    report_data,
+                    report_name,
+                    OUTPUT_FOLDER / filename,
+                )
+
+                print(
+                    f"Created: {filename} "
+                    f"({len(report_data):,} cycle rows)"
+                )
+
+            animation_filename = OUTPUT_FILES["Animation"]
+
+            create_tracker_workbook(
+                animation_data,
+                "Animation",
+                OUTPUT_FOLDER / animation_filename,
+                roster_exceptions=roster_exceptions,
+                roster_count=roster_count,
+                matched_roster_count=len(animation_ssos),
+            )
+
+            print(
+                f"Created: {animation_filename} "
+                f"({len(animation_data):,} cycle rows)"
+            )
+
+        except Exception as error:
+            print()
+            print(f"ERROR creating Excel reports: {error}")
+            print("Cycle history was not updated.")
+            return 1
+
+        # Save historical evidence only after all four workbooks succeed.
+        try:
+            save_cycle_history(updated_history)
+        except Exception as error:
+            print()
+            print(f"ERROR saving cycle history: {error}")
+            print(
+                "The Excel reports were created, but cycle history "
+                "was not updated."
+            )
+            return 1
+
+        print()
+        print("Cycle history")
+        print("-------------")
+
+        for label, value in history_stats.items():
+            print(f"{label}: {value:,}")
+
+        print()
+        print(f"Animation roster unique SSOs: {roster_count:,}")
+        print(
+            "Animation SSOs matched to UCMOD4: "
+            f"{len(animation_ssos):,}"
         )
-    except Exception as error:
-        print(f"ERROR: {error}")
-        return 1
+        print(
+            f"Animation roster exceptions: "
+            f"{len(roster_exceptions):,}"
+        )
+        print(f"Output folder: {OUTPUT_FOLDER}")
+        print(
+            "Total processing time: "
+            f"{time.perf_counter() - started:,.1f} seconds"
+        )
+        print("Excel report generation completed successfully.")
 
-    OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
-
-    for venue, filename in OUTPUT_FILES.items():
-        output_path = OUTPUT_FOLDER / filename
-        create_venue_workbook(results, venue, output_path)
-        venue_count = int((results["Venue"] == venue).sum())
-        print(f"Created: {filename} ({venue_count:,} cycle rows)")
-
-    print()
-    print(f"Output folder: {OUTPUT_FOLDER}")
-    print(f"Total processing time: {time.perf_counter() - started:,.1f} seconds")
-    print("Excel report generation completed successfully.")
-    return 0
+        return 0
 
 
 if __name__ == "__main__":
