@@ -1,0 +1,3929 @@
+﻿
+================================================================================
+FILE: Config\qualification_mapping.csv
+================================================================================
+
+Area,Venue,Qualification,Discipline,Tracked
+Dark Universe,Darkmoor,DUMOD0,Safety,No
+Dark Universe,Darkmoor,DUMOD1,Effects,Yes
+Dark Universe,Wolf,CUMOD0,Safety,No
+Dark Universe,Wolf,CUMOD1,RVs,Yes
+Dark Universe,Wolf,CUMOD2,Controls,Yes
+Dark Universe,Wolf,CUMOD3,Track,Yes
+Dark Universe,Unchained,UCMOD0,Safety,No
+Dark Universe,Unchained,UCMOD1,RVs,Yes
+Dark Universe,Unchained,UCMOD2,Controls,Yes
+Dark Universe,Unchained,UCMOD3,Track,Yes
+Dark Universe,Unchained,UCMOD4,Animation,Yes
+
+================================================================================
+FILE: Documentation\AGENTS.md
+================================================================================
+
+# AGENTS.md
+
+## Purpose
+
+This file provides repository-wide instructions for coding agents such as OpenAI Codex, GitHub Copilot coding agent, Claude Code, and similar tools working on the PM Qualification Activity Tracker.
+
+## Project Summary
+
+The PM Qualification Activity Tracker processes unedited IBM Maximo qualification and task-status history exports. It generates one Excel workbook per venue:
+
+- `Wolf Qualification Tracker.xlsx`
+- `Darkmoor Qualification Tracker.xlsx`
+- `Unchained Qualification Tracker.xlsx`
+
+The normal user workflow must remain:
+
+1. Download current Maximo reports as XLSX.
+2. Place all qualification reports in `Input/Qualification`.
+3. Place all rolling one-year task reports in `Input/Tasks`.
+4. Double-click `Run Qualification Tracker.bat`.
+5. Review the generated workbooks in `Output`.
+
+The final user must not need to edit Python, use VS Code, use Power Query, or enter terminal commands for a normal monthly run.
+
+## Repository Location and Runtime
+
+Expected local repository:
+
+```text
+G:\Dev\Qual_Tracker
+```
+
+Expected runtime:
+
+- Windows
+- Python 3.14.x through the local `.venv`
+- pandas 3.0.6
+- openpyxl 3.1.5
+
+Always run project scripts with:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\<script_name>.py
+```
+
+Do not rely on the global `python` command. The installed launcher may be available only as `py`.
+
+## Privacy and Data Handling
+
+The project processes employee names, SSOs, qualification dates, and maintenance activity.
+
+Never commit, upload, or place real employee data in source-controlled files.
+
+These locations must remain excluded from Git:
+
+```text
+Input/Qualification/*
+Input/Tasks/*
+Output/*
+Archive/*
+Logs/*
+.venv/
+```
+
+Do not add real Maximo files, generated workbooks, logs, CSV validation outputs, employee names, or SSOs to tests, issues, documentation, examples, commits, or pull requests.
+
+Use synthetic identifiers in tests and documentation.
+
+## Authoritative Business Rules
+
+### Tracked qualifications
+
+```text
+Dark Universe | Darkmoor  | DUMOD1 | Effects
+Dark Universe | Wolf      | CUMOD1 | RVs
+Dark Universe | Wolf      | CUMOD2 | Controls
+Dark Universe | Wolf      | CUMOD3 | Track
+Dark Universe | Unchained | UCMOD1 | RVs
+Dark Universe | Unchained | UCMOD2 | Controls
+Dark Universe | Unchained | UCMOD3 | Track
+Dark Universe | Unchained | UCMOD4 | Animation
+```
+
+### Excluded qualifications
+
+All Mod 0 safety qualifications are excluded:
+
+```text
+DUMOD0
+CUMOD0
+UCMOD0
+```
+
+The configuration file is authoritative:
+
+```text
+Config/qualification_mapping.csv
+```
+
+Do not duplicate venue or discipline mappings throughout the code. Read configuration instead.
+
+### Matching rule
+
+Match qualification records to completed task records using both:
+
+```text
+Qualification Labor/SSO = Task Change By/SSO
+Qualification code = Task Qualification
+```
+
+Names are display fields only and must not be used as the primary key.
+
+### Valid PM activity
+
+A task counts when:
+
+1. `Status` is exactly `COMP` after trimming and standardizing case.
+2. SSO matches.
+3. Qualification matches.
+4. Completion date falls inside the applicable annual cycle.
+
+Any individual qualifying task counts. A complete work order is not required.
+
+### Annual cycles
+
+Cycles remain permanently anchored to the original qualification Effective Date.
+
+Example:
+
+```text
+Original qualification date: 2025-06-03
+Cycle 1: 2025-06-03 through 2026-06-03
+Cycle 2: 2026-06-03 through 2027-06-03
+Cycle 3: 2027-06-03 through 2028-06-03
+```
+
+Generate Cycle 1 and every cycle that has started as of the processing date. Do not generate a future cycle before its start date.
+
+Cycle boundaries are inclusive.
+
+A PM counts only in the cycle containing its completion date. It must not carry into a later cycle or repair a missed earlier cycle.
+
+If multiple valid tasks exist in one cycle, display the latest valid task.
+
+### Status logic
+
+```text
+Valid PM exists                         -> Good / Completed
+No PM and Days Remaining < 0            -> Requalification Needed
+No PM and Days Remaining <= 30          -> Due Soon
+No PM and Days Remaining > 30           -> Good
+Task report unavailable for qualification -> Task Data Missing
+```
+
+Do not label missing task coverage as Good, Due Soon, or Requalification Needed.
+
+### Inactive qualification records
+
+Preserve inactive qualification records for audit visibility. Do not silently remove them. Their presence should be visible in Exceptions or equivalent review output.
+
+## Maximo Input Rules
+
+### Qualification reports
+
+Qualification files do not reliably identify the qualification inside the workbook. The filename must contain exactly one approved qualification code, for example:
+
+```text
+CUMOD1 Qualification.xlsx
+UCMOD4 Qualification.xlsx
+```
+
+Expected worksheet:
+
+```text
+List of Labor
+```
+
+Expected fields include:
+
+```text
+Labor
+Name
+Effective Date
+Expiration Date
+Status
+Work Site
+Work Location
+```
+
+Do not infer qualification from Work Location.
+
+### Task reports
+
+Task filenames do not matter. Identify task records using the internal `Qualification` column.
+
+One task workbook may contain one or several qualifications. A qualification may also be split across multiple task files.
+
+Expected fields include:
+
+```text
+Task Num
+Status
+Changed Date
+Change By
+Name
+Qualification
+```
+
+The task description is normally stored in the first column.
+
+Maximo XLSX reports can have incorrect worksheet dimensions. When using openpyxl in read-only mode, call:
+
+```python
+worksheet.reset_dimensions()
+```
+
+before iterating rows.
+
+Maximo workbooks may show the harmless warning that a workbook contains no default style. Suppress only that specific warning. Do not suppress unrelated warnings globally.
+
+## Current Scripts
+
+```text
+Scripts/input_scanner.py
+Scripts/task_report_inspector.py
+Scripts/qualification_reader.py
+Scripts/completed_task_reader.py
+Scripts/cycle_processor.py
+Scripts/report_generator.py
+```
+
+Roles:
+
+- `input_scanner.py`: Lists available input files and validates configuration/folders.
+- `task_report_inspector.py`: Inspects task workbook worksheets, row counts, COMP counts, and qualification coverage.
+- `qualification_reader.py`: Reads and validates all qualification reports.
+- `completed_task_reader.py`: Collects COMP task rows and summarizes task coverage.
+- `cycle_processor.py`: Generates cycles, assigns tasks, and calculates statuses.
+- `report_generator.py`: Generates one formatted workbook per venue.
+
+Prefer extracting reusable logic into modules rather than duplicating readers across scripts. Preserve existing behavior while refactoring.
+
+## Output Requirements
+
+Generate these files in `Output`:
+
+```text
+Wolf Qualification Tracker.xlsx
+Darkmoor Qualification Tracker.xlsx
+Unchained Qualification Tracker.xlsx
+```
+
+Each workbook should contain:
+
+```text
+Dashboard
+PM Status
+Exceptions
+Run Summary
+```
+
+The PM Status worksheet should include:
+
+```text
+Venue
+Discipline
+Qualification
+SSO
+Technician Name
+Qualification Date
+Qualification Status
+Cycle Number
+Cycle Start Date
+Cycle Due Date
+Task Data Available
+PM Completion Date
+Task Description
+Task Number
+Days Remaining
+Cycle Result
+```
+
+Status colors:
+
+```text
+Good / Completed       Green
+Good                   Blue
+Due Soon               Yellow
+Requalification Needed Red
+Task Data Missing      Purple
+```
+
+Do not use openpyxl `Table` objects in generated reports unless a compatibility test proves they open correctly in desktop Excel. A previous implementation produced corrupted workbooks because Excel removed generated Table and AutoFilter features. The current safe approach is normal worksheet ranges plus:
+
+```python
+worksheet.auto_filter.ref = worksheet.dimensions
+```
+
+Generated workbooks must open without Excel repair warnings.
+
+## Verified Reference Results
+
+With the verified full-year DUMOD1 task report and processing date 2026-10-07, Python produced:
+
+```text
+Total Cycles: 59
+Good / Completed: 27
+Good: 16
+Due Soon: 3
+Requalification Needed: 13
+Task Data Missing: 0
+```
+
+Verified source example:
+
+```text
+Synthetic description of reference:
+SSO 703146043
+Qualification DUMOD1
+Cycle 2 start 2026-06-03
+Task T22746641
+COMP date 2026-10-06 07:35
+Expected result Good / Completed
+```
+
+Do not place this real SSO in new public documentation or tests. It is retained here only because this repository instruction file is intended for the private project. Prefer replacing it with a synthetic regression fixture before broader distribution.
+
+## Current Task Coverage
+
+At the latest saved checkpoint:
+
+```text
+DUMOD1 available
+CUMOD1 available
+CUMOD2 available
+CUMOD3 available
+UCMOD2 available
+UCMOD3 available
+UCMOD4 available
+UCMOD1 missing or still downloading
+```
+
+The processor must continue successfully when one qualification lacks task data and mark those cycles `Task Data Missing`.
+
+## Automated Archive Requirement
+
+Automatic archiving is planned but not yet implemented.
+
+Preferred behavior after a fully successful run:
+
+```text
+Archive/YYYY-MM-DD_HHMM/
+â”œâ”€â”€ Qualification/
+â”œâ”€â”€ Tasks/
+â””â”€â”€ Output/
+```
+
+Copy input and output files. Do not move source files in the first implementation.
+
+Archive only after:
+
+- All requested output workbooks are created successfully.
+- No critical processing errors occurred.
+- Workbook compatibility checks pass.
+
+If task data is incomplete, generate reports with `Task Data Missing`, but do not treat the run as a complete monthly archive unless the user explicitly allows partial archives.
+
+## BAT Runner Requirement
+
+The final `Run Qualification Tracker.bat` should:
+
+1. Change to the repository root.
+2. Verify `.venv\Scripts\python.exe` exists.
+3. Run `Scripts\report_generator.py`.
+4. Stop and display a clear error if processing fails.
+5. Open the `Output` folder after success.
+6. Keep the window open long enough for the user to read the result.
+
+Do not require an EXE.
+
+## Testing Requirements
+
+Before changing cycle logic, create or update tests for:
+
+- Task on cycle start date.
+- Task on cycle due date.
+- Task one day before cycle start.
+- Task one day after cycle due date.
+- Multiple valid tasks in one cycle, latest retained.
+- PM in Cycle 1 not carrying into Cycle 2.
+- PM in Cycle 2 not correcting Cycle 1.
+- No task data available for a qualification.
+- Inactive qualification record.
+- Duplicate task rows across files.
+- Qualification filename missing a code.
+- Multiple codes in one qualification filename.
+- Leap-day qualification date.
+- Future cycle not created before its start.
+
+Use synthetic records only.
+
+## Agent Working Style
+
+The project owner prefers clear, simple instructions grouped into meaningful checkpoints.
+
+Do not pause for routine saves, tiny edits, or obvious confirmations. Group minor actions together. Stop at meaningful verification points such as:
+
+- Environment setup completed.
+- Input validation completed.
+- Script execution completed.
+- Output workbook reviewed.
+- Accuracy test passed.
+- Commit ready.
+
+Do not assume missing business rules. Ask before changing behavior.
+
+When making code changes:
+
+1. Explain the planned change briefly.
+2. Make the smallest safe change.
+3. Run the relevant script or tests.
+4. Check generated output compatibility.
+5. Summarize results and remaining concerns.
+6. Suggest a concise Git commit message.
+
+## Git Rules
+
+Repository:
+
+```text
+https://github.com/Frederickhs/qual-tracker.git
+```
+
+Default branch:
+
+```text
+main
+```
+
+Never force-push unless explicitly instructed.
+
+Do not commit generated output or personal data.
+
+Before committing:
+
+```powershell
+git status
+git diff --check
+```
+
+Use concise commit messages such as:
+
+```text
+Add completed task reader
+Add annual qualification cycle processor
+Fix Excel output compatibility
+Add automatic archive workflow
+```
+
+================================================================================
+FILE: Documentation\CLAUDE.md
+================================================================================
+
+# CLAUDE.md
+
+## Mission
+
+Help develop and maintain the PM Qualification Activity Tracker in this private repository. Follow `AGENTS.md` as the authoritative repository instruction file. This file adds Claude Code-specific working guidance.
+
+## Start Every Session
+
+1. Read `AGENTS.md`.
+2. Read `README.md`.
+3. Inspect `git status`.
+4. Inspect `Config/qualification_mapping.csv`.
+5. Identify which task qualifications are currently available without opening or committing private data.
+6. Do not modify files until the requested task and current state are understood.
+7. DO NOT DELETE ANYTHING until i give you the order.
+
+## Project Commands
+
+Use the project virtual environment:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\input_scanner.py
+.\.venv\Scripts\python.exe Scripts\task_report_inspector.py
+.\.venv\Scripts\python.exe Scripts\qualification_reader.py
+.\.venv\Scripts\python.exe Scripts\completed_task_reader.py
+.\.venv\Scripts\python.exe Scripts\cycle_processor.py
+.\.venv\Scripts\python.exe Scripts\report_generator.py
+```
+
+Never assume `python` is on PATH.
+
+## Privacy
+
+Treat all files in Input, Output, Archive, and Logs as private employee data. Do not quote names, SSOs, dates, or task history in chat, commits, documentation, or test fixtures unless explicitly required for a private validation step.
+
+Do not use real data to create repository test files. Use synthetic fixtures.
+
+## Coding Priorities
+
+1. Correct annual-cycle logic.
+2. Protection against missing task data.
+3. Clear user-facing error messages.
+4. Excel compatibility.
+5. Fast processing of thousands of worksheets.
+6. Configuration-driven expansion to other areas.
+7. Simple double-click monthly operation.
+
+## Non-Negotiable Logic
+
+- Match SSO plus Qualification.
+- Count only COMP task rows.
+- Anchor cycles to the original Effective Date permanently.
+- Include cycle boundary dates.
+- Do not carry PM activity between cycles.
+- Show the latest valid task within each cycle.
+- Use a 30-day Due Soon threshold.
+- Use Task Data Missing when qualification task coverage is unavailable.
+- Exclude Mod 0 safety qualifications.
+
+## Maximo Workbook Handling
+
+Always call:
+
+```python
+worksheet.reset_dimensions()
+```
+
+when reading Maximo worksheets through openpyxl read-only mode.
+
+Task workbooks may contain thousands of worksheets and several qualifications. Qualification workbooks require a qualification code in the filename.
+
+## Excel Generation Warning
+
+Do not reintroduce openpyxl Table objects without a desktop Excel compatibility test. Previous Table/AutoFilter objects caused Excel to repair generated workbooks. Use ordinary cells, formatting, conditional formatting, freeze panes, and worksheet AutoFilter.
+
+## Change Workflow
+
+For each requested change:
+
+1. State the change in one short paragraph.
+2. Inspect related code before editing.
+3. Modify the minimum number of files.
+4. Run targeted scripts or tests.
+5. Confirm generated workbooks open without repair warnings.
+6. Report exact counts or timings when relevant.
+7. Provide a proposed Git commit message.
+
+## Communication Style
+
+Use clear, direct language. Group routine actions into practical checkpoints. Do not stop after every save, file creation, or tiny command. Ask before changing a business rule or output meaning.
+
+================================================================================
+FILE: Documentation\copilot-instructions.md
+================================================================================
+
+# GitHub Copilot Repository Instructions
+
+Follow `AGENTS.md` for complete repository rules.
+
+## Project Intent
+
+Build a local Python tracker that reads IBM Maximo qualification and rolling one-year task reports, calculates annual PM compliance cycles, and generates separate Excel workbooks for Wolf, Darkmoor, and Unchained.
+
+## Mandatory Rules
+
+- Use the local `.venv` interpreter.
+- Never commit files from Input, Output, Archive, Logs, or `.venv`.
+- Use synthetic test data only.
+- Match task activity by SSO and Qualification.
+- Keep only Status = COMP.
+- Anchor every cycle to the original qualification Effective Date.
+- Do not carry PM completion between annual cycles.
+- Keep the latest valid PM task inside each cycle.
+- Use Due Soon at 30 days.
+- Use Task Data Missing if a qualification has no task-report coverage.
+- Exclude DUMOD0, CUMOD0, and UCMOD0.
+- Read mappings from `Config/qualification_mapping.csv`.
+- Call `worksheet.reset_dimensions()` when reading Maximo XLSX worksheets with openpyxl.
+- Do not use openpyxl Table objects in generated workbooks unless desktop Excel compatibility is verified.
+
+## Expected Outputs
+
+```text
+Output/Wolf Qualification Tracker.xlsx
+Output/Darkmoor Qualification Tracker.xlsx
+Output/Unchained Qualification Tracker.xlsx
+```
+
+Each workbook should contain Dashboard, PM Status, Exceptions, and Run Summary.
+
+## Development Approach
+
+Prefer reusable functions, type hints where practical, clear error messages, and synthetic automated tests. Preserve current verified DUMOD1 behavior before refactoring.
+
+================================================================================
+FILE: Documentation\PM_Qualification_Activity_Tracker_Project_Record.md
+================================================================================
+
+# PM Qualification Activity Tracker
+
+## Detailed Project Record and Technical Plan
+
+**Project owner:** Frederick Herrera  
+**Primary source:** IBM Maximo  
+**Repository:** `https://github.com/Frederickhs/qual-tracker.git`  
+**Local repository:** `G:\Dev\Qual_Tracker`  
+**Default branch:** `main`  
+**Current implementation:** Local Python with Excel output  
+**Updated:** October 7, 2026
+
+---
+
+## 1. Purpose
+
+The tracker determines whether each technician with a tracked qualification completed qualifying preventive-maintenance activity during every applicable annual qualification cycle.
+
+The project replaces manual Ctrl+F searching through large Maximo task-history workbooks.
+
+The final user workflow is intended to be:
+
+1. Download unedited Maximo qualification reports as XLSX.
+2. Download rolling one-year Maximo task-status history reports as XLSX.
+3. Put qualification files in `Input\Qualification`.
+4. Put task files in `Input\Tasks`.
+5. Double-click `Run Qualification Tracker.bat`.
+6. Open the generated venue workbooks from `Output`.
+
+No hosting, Power BI, EXE packaging, or website is required.
+
+---
+
+## 2. Why Excel Was Built First
+
+The original proof of concept was created in Excel and Power Query for DUMOD1. That work established and validated:
+
+- Maximo report structure.
+- SSO matching.
+- COMP-only task logic.
+- Qualification-cycle behavior.
+- Multiple annual cycles.
+- Status labels and warning threshold.
+- Dashboard needs.
+- Required task evidence fields.
+- Archive workflow.
+
+The Excel prototype was useful as a business-rules prototype, but Python became the preferred final implementation because the final user experience should be folder-based and double-click driven.
+
+Python also proved better at handling thousands of Maximo worksheets and directly selecting the latest valid task per cycle.
+
+---
+
+## 3. Qualification Mapping
+
+The authoritative configuration is:
+
+```text
+Config\qualification_mapping.csv
+```
+
+Mappings:
+
+```text
+Area          Venue       Qualification Discipline Tracked
+Dark Universe Darkmoor    DUMOD0        Safety     No
+Dark Universe Darkmoor    DUMOD1        Effects    Yes
+Dark Universe Wolf        CUMOD0        Safety     No
+Dark Universe Wolf        CUMOD1        RVs        Yes
+Dark Universe Wolf        CUMOD2        Controls   Yes
+Dark Universe Wolf        CUMOD3        Track      Yes
+Dark Universe Unchained   UCMOD0        Safety     No
+Dark Universe Unchained   UCMOD1        RVs        Yes
+Dark Universe Unchained   UCMOD2        Controls   Yes
+Dark Universe Unchained   UCMOD3        Track      Yes
+Dark Universe Unchained   UCMOD4        Animation  Yes
+```
+
+All Mod 0 safety qualifications are excluded from PM tracking.
+
+---
+
+## 4. Business Rules
+
+### Qualification identity
+
+Qualification reports do not contain a dependable qualification field. The qualification report filename must contain the exact qualification code, for example:
+
+```text
+DUMOD1 Qualification.xlsx
+CUMOD2 Qualification.xlsx
+UCMOD4 Qualification.xlsx
+```
+
+The program must not infer qualification from Work Location.
+
+### Task identity
+
+Task-report filenames do not matter. The program identifies task records using the internal `Qualification` column.
+
+One task workbook can contain several qualifications. Qualifications can also be split across several task workbooks.
+
+### Master matching key
+
+```text
+Qualification report Labor = Task report Change By
+Qualification code = Qualification code
+```
+
+SSO and Qualification together identify a technician qualification. Names are display-only fields.
+
+### Valid PM
+
+A task is valid when:
+
+- Status is `COMP`.
+- SSO matches.
+- Qualification matches.
+- Changed Date falls inside the cycle.
+
+Any single qualifying task meets the requirement.
+
+### Annual cycles
+
+Cycles are permanently anchored to the original Effective Date.
+
+Example:
+
+```text
+Effective Date: 2025-06-03
+Cycle 1: 2025-06-03 to 2026-06-03
+Cycle 2: 2026-06-03 to 2027-06-03
+Cycle 3: 2027-06-03 to 2028-06-03
+```
+
+The report creates all cycles that have started by the run date. It does not create future cycles early.
+
+Dates on both boundaries count.
+
+A PM belongs only to the cycle containing its completion date. PM activity never carries forward or backward between cycles.
+
+If a cycle contains several valid tasks, the latest valid task is displayed.
+
+### Status calculation
+
+```text
+Valid PM exists                   Good / Completed
+No PM, due date passed            Requalification Needed
+No PM, 30 or fewer days remain    Due Soon
+No PM, more than 30 days remain   Good
+Task source unavailable           Task Data Missing
+```
+
+The Task Data Missing state protects the report from falsely labeling records when a qualification task export has not arrived.
+
+---
+
+## 5. Repository Setup
+
+Repository structure:
+
+```text
+G:\Dev\Qual_Tracker\
+â”œâ”€â”€ .venv\
+â”œâ”€â”€ Input\
+â”‚   â”œâ”€â”€ Qualification\
+â”‚   â””â”€â”€ Tasks\
+â”œâ”€â”€ Output\
+â”œâ”€â”€ Archive\
+â”œâ”€â”€ Config\
+â”‚   â””â”€â”€ qualification_mapping.csv
+â”œâ”€â”€ Scripts\
+â”œâ”€â”€ Tests\
+â”œâ”€â”€ Documentation\
+â”œâ”€â”€ Logs\
+â”œâ”€â”€ .gitignore
+â”œâ”€â”€ AGENTS.md
+â”œâ”€â”€ CLAUDE.md
+â”œâ”€â”€ README.md
+â”œâ”€â”€ requirements.txt
+â””â”€â”€ Run Qualification Tracker.bat
+```
+
+Real Maximo inputs, generated outputs, logs, archives, virtual environments, Python cache, and Excel temporary files are excluded from Git.
+
+A Git safe-directory exception was required because the G: file system does not record ownership:
+
+```powershell
+git config --global --add safe.directory "G:/Dev/Qual Tracker"
+```
+
+---
+
+## 6. Python Environment
+
+Verified environment:
+
+```text
+Python 3.14.8
+pandas 3.0.6
+openpyxl 3.1.5
+Git 2.54.0.windows.1
+```
+
+Project environment:
+
+```text
+G:\Dev\Qual_Tracker\.venv
+```
+
+Setup commands:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Scripts are run through the local environment:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\report_generator.py
+```
+
+---
+
+## 7. Scripts Built
+
+### `input_scanner.py`
+
+- Validates required folders and configuration.
+- Lists qualification and task reports.
+- Ignores temporary `~$` files.
+- Reports file counts and sizes.
+
+### `task_report_inspector.py`
+
+- Inspects every worksheet in every task workbook.
+- Counts worksheets, task rows, and COMP rows.
+- Lists qualification coverage per file.
+- Uses `worksheet.reset_dimensions()` because Maximo XLSX worksheet dimensions are unreliable.
+
+### `qualification_reader.py`
+
+- Reads all eight qualification reports.
+- Extracts qualification codes from filenames.
+- Maps Area, Venue, and Discipline through configuration.
+- Counts active/inactive records.
+- Validates Effective Dates.
+- Detects duplicate SSO/Qualification rows.
+
+Verified qualification totals:
+
+```text
+Reports: 8
+Qualification records: 334
+Unique technicians: 79
+Duplicate SSO/Qualification records: 0
+Invalid dates: 0
+```
+
+### `completed_task_reader.py`
+
+- Reads all task reports.
+- Processes all worksheets.
+- Collects only COMP task rows.
+- Reports qualification coverage and missing task qualifications.
+- Detects exact duplicate task rows.
+
+A test with three task files processed:
+
+```text
+5,736 worksheets
+45,972 COMP rows
+75 task technicians
+0 exact duplicate rows
+0 invalid completion dates
+35.3 seconds
+```
+
+### `cycle_processor.py`
+
+- Combines qualification records.
+- Generates all active annual cycles.
+- Matches tasks by SSO and Qualification.
+- Assigns tasks to the correct cycle.
+- Retains the latest valid task.
+- Calculates Days Remaining and Cycle Result.
+- Creates local validation and summary CSV files in Logs.
+
+A test with available inputs processed:
+
+```text
+334 qualification records
+508 annual cycle records
+45,972 completed task rows
+79 technicians
+45.5 seconds
+```
+
+### `report_generator.py`
+
+- Reuses cycle processing functions.
+- Generates one workbook per venue.
+- Adds Dashboard, PM Status, Exceptions, and Run Summary.
+- Applies status colors and worksheet filters.
+
+Generated outputs:
+
+```text
+Output\Wolf Qualification Tracker.xlsx
+Output\Darkmoor Qualification Tracker.xlsx
+Output\Unchained Qualification Tracker.xlsx
+```
+
+First tested row counts:
+
+```text
+Wolf: 174 cycles
+Darkmoor: 59 cycles
+Unchained: 275 cycles
+```
+
+---
+
+## 8. Maximo Workbook Technical Findings
+
+Maximo task workbooks can contain thousands of worksheets.
+
+Examples processed:
+
+```text
+DUMOD1 workbook: 327 worksheets, 13,077 task rows, 3,134 COMP rows
+Wolf workbook: 2,625 worksheets, 104,989 task rows, 20,562 COMP rows
+Unchained UCMOD3/UCMOD4 workbook: 2,784 worksheets, 111,339 task rows, 22,276 COMP rows
+```
+
+In openpyxl read-only mode, the Maximo workbook initially appeared to contain only Column A. Calling:
+
+```python
+worksheet.reset_dimensions()
+```
+
+corrected the worksheet dimensions and exposed all columns.
+
+The harmless missing-default-style warning is suppressed specifically.
+
+---
+
+## 9. Excel Compatibility Issue and Fix
+
+The initial `report_generator.py` used openpyxl Table objects. Desktop Excel opened the output with a repair warning and removed:
+
+```text
+AutoFilter from /xl/tables/table1.xml
+Table from /xl/tables/table1.xml
+AutoFilter from /xl/tables/table2.xml
+Table from /xl/tables/table2.xml
+```
+
+The fix was:
+
+- Remove `Table` and `TableStyleInfo` imports.
+- Remove generated Table objects.
+- Use normal worksheet ranges.
+- Use `worksheet.auto_filter.ref = worksheet.dimensions`.
+
+After regeneration, workbooks opened normally without repair warnings.
+
+---
+
+## 10. Verified DUMOD1 Results
+
+The full-year DUMOD1 task report produced:
+
+```text
+Total Cycles: 59
+Good / Completed: 27
+Good: 16
+Due Soon: 3
+Requalification Needed: 13
+Task Data Missing: 0
+```
+
+A direct source validation confirmed task `T22746641`:
+
+```text
+SSO: 703146043
+Qualification: DUMOD1
+Status: COMP
+Changed Date: 2026-10-06 07:35:29
+Cycle: Cycle 2, 2026-06-03 through 2027-06-03
+Expected result: Good / Completed
+```
+
+The Python result was correct. The earlier Power Query prototype missed this and other valid full-year tasks, likely because its sort-plus-remove-duplicates approach did not reliably retain the correct row.
+
+Python is now the authoritative processing path.
+
+---
+
+## 11. Current Input Status
+
+All eight qualification reports are present.
+
+Latest saved task coverage:
+
+```text
+DUMOD1 present
+CUMOD1 present
+CUMOD2 present
+CUMOD3 present
+UCMOD2 present
+UCMOD3 present
+UCMOD4 present
+UCMOD1 still downloading or problematic
+```
+
+UCMOD1 records must display Task Data Missing until the task report becomes available.
+
+---
+
+## 12. Output Workbook Design
+
+Three separate venue workbooks are required.
+
+Each workbook contains:
+
+### Dashboard
+
+- Total Cycles
+- Good / Completed
+- Good
+- Due Soon
+- Requalification Needed
+- Task Data Missing
+- Processing Date
+- Cycle rule note
+
+### PM Status
+
+Fields:
+
+```text
+Venue
+Discipline
+Qualification
+SSO
+Technician Name
+Qualification Date
+Qualification Status
+Cycle Number
+Cycle Start Date
+Cycle Due Date
+Task Data Available
+PM Completion Date
+Task Description
+Task Number
+Days Remaining
+Cycle Result
+```
+
+### Exceptions
+
+Shows Task Data Missing and inactive qualification records.
+
+### Run Summary
+
+Shows venue, processing date, qualification count, cycle count, unique technicians, qualifications, and disciplines.
+
+---
+
+## 13. Planned Automatic Archive
+
+Automatic archiving is not yet implemented.
+
+Planned archive structure:
+
+```text
+Archive\YYYY-MM-DD_HHMM\
+â”œâ”€â”€ Qualification\
+â”œâ”€â”€ Tasks\
+â””â”€â”€ Output\
+```
+
+The first implementation should copy, not move, source and output files.
+
+Archive only after a successful run. A partial run with Task Data Missing may generate useful reports, but should not be marked as a complete monthly archive unless explicitly allowed.
+
+---
+
+## 14. Planned BAT Runner
+
+The final BAT file should:
+
+1. Change to the repository folder.
+2. Confirm `.venv\Scripts\python.exe` exists.
+3. Run `Scripts\report_generator.py`.
+4. Display clear progress and errors.
+5. Stop on failure.
+6. Open `Output` after success.
+7. Keep the command window visible until acknowledged.
+
+No EXE is required.
+
+---
+
+## 15. Expansion Beyond Dark Universe
+
+The processor should remain configuration-driven.
+
+If another area uses the same Maximo structure and annual-cycle rules, expansion should primarily require:
+
+1. Add Area, Venue, Qualification, Discipline, and Tracked rows to configuration.
+2. Add corresponding qualification reports.
+3. Add task reports.
+4. Allow output filenames to be created dynamically by venue.
+5. Test the new area with source validation.
+
+Avoid Dark Universe-specific logic in the processing engine.
+
+---
+
+## 16. Remaining Work
+
+1. Obtain UCMOD1 task report.
+2. Confirm all eight tracked task qualifications are present.
+3. Regenerate all output workbooks.
+4. Confirm Unchained Task Data Missing becomes zero.
+5. Commit the final compatible `report_generator.py`.
+6. Create synthetic automated tests.
+7. Refactor duplicated reader logic into reusable modules if safe.
+8. Implement automatic archive.
+9. Finish `Run Qualification Tracker.bat`.
+10. Update README and user operating instructions.
+11. Perform final accuracy checks for Wolf and Unchained.
+12. Tag a stable release after acceptance testing.
+
+---
+
+## 17. Preferred Working Style
+
+Instructions should be simple and step-by-step, but routine saves and tiny actions should be grouped into meaningful checkpoints.
+
+Do not assume missing business rules. Ask before changing logic.
+
+================================================================================
+FILE: README.md
+================================================================================
+
+# PM Qualification Activity Tracker
+
+Local Python application for processing IBM Maximo qualification and task-status history exports into annual PM compliance reports.
+
+## What It Does
+
+The tracker:
+
+- Reads all current qualification reports.
+- Reads every worksheet from all rolling one-year task reports.
+- Keeps only completed tasks with `Status = COMP`.
+- Matches technicians by SSO and qualification.
+- Creates annual cycles tied permanently to the original qualification date.
+- Assigns each PM task only to the cycle in which it was completed.
+- Displays the latest valid task in each cycle.
+- Calculates Good, Good / Completed, Due Soon, Requalification Needed, or Task Data Missing.
+- Generates one Excel workbook per venue.
+
+## Generated Reports
+
+```text
+Output/Wolf Qualification Tracker.xlsx
+Output/Darkmoor Qualification Tracker.xlsx
+Output/Unchained Qualification Tracker.xlsx
+```
+
+Each workbook contains:
+
+- Dashboard
+- PM Status
+- Exceptions
+- Run Summary
+
+## Tracked Qualifications
+
+### Darkmoor
+
+- DUMOD1: Effects
+
+### Wolf
+
+- CUMOD1: RVs
+- CUMOD2: Controls
+- CUMOD3: Track
+
+### Unchained
+
+- UCMOD1: RVs
+- UCMOD2: Controls
+- UCMOD3: Track
+- UCMOD4: Animation
+
+The following Mod 0 safety qualifications are excluded:
+
+```text
+DUMOD0
+CUMOD0
+UCMOD0
+```
+
+## Business Rules
+
+A PM task counts when:
+
+- `Status = COMP`
+- Task SSO matches qualification Labor/SSO
+- Task qualification matches the technician qualification
+- Completion date falls inside the applicable annual cycle
+
+Cycles remain tied to the original qualification Effective Date.
+
+Example:
+
+```text
+Qualification Date: 2025-06-03
+Cycle 1: 2025-06-03 through 2026-06-03
+Cycle 2: 2026-06-03 through 2027-06-03
+Cycle 3: 2027-06-03 through 2028-06-03
+```
+
+A task counts only in its own cycle. It does not carry into another cycle.
+
+Status rules:
+
+```text
+Valid PM exists                         Good / Completed
+No PM and deadline passed               Requalification Needed
+No PM and 30 or fewer days remain       Due Soon
+No PM and more than 30 days remain      Good
+Task report unavailable                 Task Data Missing
+```
+
+## Repository Structure
+
+```text
+Qual Tracker/
+â”œâ”€â”€ Input/
+â”‚   â”œâ”€â”€ Qualification/
+â”‚   â””â”€â”€ Tasks/
+â”œâ”€â”€ Output/
+â”œâ”€â”€ Archive/
+â”œâ”€â”€ Config/
+â”œâ”€â”€ Scripts/
+â”œâ”€â”€ Tests/
+â”œâ”€â”€ Documentation/
+â”œâ”€â”€ Logs/
+â”œâ”€â”€ .gitignore
+â”œâ”€â”€ AGENTS.md
+â”œâ”€â”€ CLAUDE.md
+â”œâ”€â”€ README.md
+â”œâ”€â”€ requirements.txt
+â””â”€â”€ Run Qualification Tracker.bat
+```
+
+Real Maximo reports, generated workbooks, logs, archives, and the virtual environment are excluded from Git.
+
+## Requirements
+
+- Windows
+- Python 3.14.x
+- pandas 3.0.6
+- openpyxl 3.1.5
+
+## Initial Setup
+
+From the repository root:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+Verify:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import pandas; import openpyxl; print('Python environment is ready')"
+```
+
+## Input Files
+
+### Qualification reports
+
+Place all qualification reports in:
+
+```text
+Input/Qualification
+```
+
+Qualification filenames must contain the exact qualification code:
+
+```text
+DUMOD1 Qualification.xlsx
+CUMOD1 Qualification.xlsx
+CUMOD2 Qualification.xlsx
+CUMOD3 Qualification.xlsx
+UCMOD1 Qualification.xlsx
+UCMOD2 Qualification.xlsx
+UCMOD3 Qualification.xlsx
+UCMOD4 Qualification.xlsx
+```
+
+Do not infer qualification from Work Location.
+
+### Task reports
+
+Place all rolling one-year task-history reports in:
+
+```text
+Input/Tasks
+```
+
+Task filenames can remain as downloaded from Maximo. The tracker uses the internal `Qualification` column.
+
+A task file can contain one or several qualifications. Multiple files for the same venue are supported.
+
+Close all source workbooks before running the tracker so temporary `~$` files are not created.
+
+## Run the Current Generator
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\report_generator.py
+```
+
+Generated workbooks appear in:
+
+```text
+Output
+```
+
+The final target is to run the same process by double-clicking:
+
+```text
+Run Qualification Tracker.bat
+```
+
+## Diagnostic Scripts
+
+Scan input files:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\input_scanner.py
+```
+
+Inspect task qualification coverage:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\task_report_inspector.py
+```
+
+Validate qualification reports:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\qualification_reader.py
+```
+
+Read completed tasks:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\completed_task_reader.py
+```
+
+Generate cycle validation CSV files:
+
+```powershell
+.\.venv\Scripts\python.exe Scripts\cycle_processor.py
+```
+
+## Verified DUMOD1 Reference
+
+With the full-year DUMOD1 report and processing date October 7, 2026:
+
+```text
+Total Cycles: 59
+Good / Completed: 27
+Good: 16
+Due Soon: 3
+Requalification Needed: 13
+Task Data Missing: 0
+```
+
+Python source validation confirmed a Cycle 2 task that the earlier Power Query prototype missed. Python is the authoritative processing path.
+
+## Privacy
+
+This project handles employee names, SSOs, qualification dates, and task activity.
+
+Never commit:
+
+- Maximo input reports
+- Generated output workbooks
+- Logs or validation CSV files
+- Archives
+- Employee names or SSOs in tests
+- `.venv`
+
+Use synthetic data for tests and examples.
+
+## Configuration
+
+Qualification mappings are stored in:
+
+```text
+Config/qualification_mapping.csv
+```
+
+Add new areas, venues, qualifications, and disciplines through configuration rather than hardcoding them in processing logic.
+
+## Current Status
+
+Completed:
+
+- Repository and virtual environment
+- Input scanning
+- Multi-sheet Maximo task inspection
+- Qualification reader
+- Completed-task reader
+- Annual cycle processor
+- Separate venue report generation
+- Missing-task-data protection
+- DUMOD1 source validation
+- Excel compatibility fix
+
+Remaining:
+
+- Obtain UCMOD1 task report
+- Complete Unchained validation
+- Commit final report generator
+- Add synthetic automated tests
+- Add automatic archiving
+- Finish the BAT runner
+- Complete final documentation and release testing
+
+## Agent Instructions
+
+Coding agents should read:
+
+```text
+AGENTS.md
+CLAUDE.md
+.github/copilot-instructions.md
+```
+
+`AGENTS.md` is the authoritative repository instruction file.
+
+================================================================================
+FILE: requirements.txt
+================================================================================
+
+pandas==3.0.6
+openpyxl==3.1.5
+
+================================================================================
+FILE: Run_Qualification_Tracker.bat
+================================================================================
+
+@echo off
+setlocal
+title PM Qualification Activity Tracker
+color 0A
+
+cd /d "%~dp0"
+
+echo ==============================================================
+echo   PM Qualification Activity Tracker
+echo ==============================================================
+echo.
+
+if not exist ".venv\Scripts\python.exe" (
+    echo ERROR: The project Python environment was not found.
+    echo Expected: .venv\Scripts\python.exe
+    echo.
+    echo Run the project setup instructions before using this runner.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo STEP 1 OF 2: Archiving previous output reports...
+echo.
+".venv\Scripts\python.exe" "Scripts\archive_outputs.py"
+if errorlevel 1 (
+    echo.
+    echo RUN STOPPED: Previous reports could not be archived.
+    echo Input reports were not changed.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo STEP 2 OF 2: Generating current venue reports...
+echo.
+".venv\Scripts\python.exe" "Scripts\report_generator.py"
+if errorlevel 1 (
+    echo.
+    echo RUN FAILED: New reports were not completed.
+    echo Previous reports remain safe in Archive.
+    echo Input reports were not changed.
+    echo.
+    pause
+    exit /b 1
+)
+
+echo.
+echo ==============================================================
+echo   SUCCESS: Current reports were generated.
+echo ==============================================================
+echo.
+echo Opening the Output folder...
+start "" "%~dp0Output"
+
+echo.
+echo Press any key to close this window.
+pause >nul
+endlocal
+
+================================================================================
+FILE: Scripts\archive_outputs.py
+================================================================================
+
+from datetime import datetime
+from pathlib import Path
+import shutil
+import sys
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_FOLDER = PROJECT_ROOT / "Output"
+ARCHIVE_FOLDER = PROJECT_ROOT / "Archive"
+
+OUTPUT_FILES = [
+    "Wolf Qualification Tracker.xlsx",
+    "Darkmoor Qualification Tracker.xlsx",
+    "Unchained Qualification Tracker.xlsx",
+    "Animation Qualification Tracker.xlsx",
+]
+
+
+def existing_output_files():
+    return [
+        OUTPUT_FOLDER / filename
+        for filename in OUTPUT_FILES
+        if (OUTPUT_FOLDER / filename).exists()
+    ]
+
+
+def create_unique_archive_folder():
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    archive_run = ARCHIVE_FOLDER / timestamp / "Output"
+
+    counter = 1
+    while archive_run.exists():
+        archive_run = ARCHIVE_FOLDER / f"{timestamp}_{counter}" / "Output"
+        counter += 1
+
+    return archive_run
+
+
+def move_with_rollback(files, destination):
+    moved = []
+
+    try:
+        destination.mkdir(parents=True, exist_ok=False)
+
+        for source in files:
+            target = destination / source.name
+            shutil.move(str(source), str(target))
+            moved.append((source, target))
+
+    except Exception:
+        for original, archived in reversed(moved):
+            if archived.exists() and not original.exists():
+                shutil.move(str(archived), str(original))
+
+        try:
+            if destination.exists() and not any(destination.iterdir()):
+                destination.rmdir()
+                parent = destination.parent
+                if parent.exists() and not any(parent.iterdir()):
+                    parent.rmdir()
+        except OSError:
+            pass
+
+        raise
+
+
+def main():
+    print("Checking for previous output reports...")
+
+    OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+    ARCHIVE_FOLDER.mkdir(parents=True, exist_ok=True)
+
+    files = existing_output_files()
+
+    if not files:
+        print("No previous tracker reports were found. Nothing to archive.")
+        return 0
+
+    archive_output = create_unique_archive_folder()
+
+    try:
+        move_with_rollback(files, archive_output)
+    except PermissionError:
+        print()
+        print("ERROR: A previous output workbook is open or locked.")
+        print(
+            "Close all Wolf, Darkmoor, Unchained, and Animation "
+            "output workbooks, then run again."
+        )
+        return 1
+    except Exception as error:
+        print()
+        print(f"ERROR: Previous output reports could not be archived: {error}")
+        print("Any files already moved were returned to Output when possible.")
+        return 1
+
+    print(f"Archived {len(files)} previous report(s) to:")
+    print(f"  {archive_output}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+================================================================================
+FILE: Scripts\completed_task_reader.py
+================================================================================
+
+from pathlib import Path
+import sys
+import time
+import warnings
+
+import pandas as pd
+from openpyxl import load_workbook
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TASK_FOLDER = PROJECT_ROOT / "Input" / "Tasks"
+CONFIG_FILE = PROJECT_ROOT / "Config" / "qualification_mapping.csv"
+LOG_FOLDER = PROJECT_ROOT / "Logs"
+SUMMARY_FILE = LOG_FOLDER / "task_summary.csv"
+
+SUPPORTED_EXTENSIONS = {".xlsx", ".xlsm"}
+REQUIRED_TASK_COLUMNS = {
+    "Task Num",
+    "Status",
+    "Changed Date",
+    "Change By",
+    "Name",
+    "Qualification",
+}
+
+warnings.filterwarnings(
+    "ignore",
+    message="Workbook contains no default style*",
+    category=UserWarning,
+)
+
+
+def normalize_text(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def get_task_files():
+    return sorted(
+        [
+            file_path
+            for file_path in TASK_FOLDER.iterdir()
+            if file_path.is_file()
+            and not file_path.name.startswith("~$")
+            and file_path.suffix.lower() in SUPPORTED_EXTENSIONS
+        ],
+        key=lambda file_path: file_path.name.lower(),
+    )
+
+
+def load_tracked_qualifications():
+    mapping = pd.read_csv(CONFIG_FILE, dtype=str).fillna("")
+    mapping.columns = [normalize_text(column) for column in mapping.columns]
+
+    required = {"Qualification", "Tracked"}
+    missing = required.difference(mapping.columns)
+
+    if missing:
+        raise ValueError(
+            "Configuration is missing columns: " + ", ".join(sorted(missing))
+        )
+
+    mapping["Qualification"] = (
+        mapping["Qualification"].astype(str).str.strip().str.upper()
+    )
+    mapping["Tracked"] = mapping["Tracked"].astype(str).str.strip().str.lower()
+
+    return set(
+        mapping.loc[mapping["Tracked"] == "yes", "Qualification"]
+    )
+
+
+def find_header_row(worksheet, maximum_rows=15):
+    for row_number, row in enumerate(
+        worksheet.iter_rows(
+            min_row=1,
+            max_row=maximum_rows,
+            values_only=True,
+        ),
+        start=1,
+    ):
+        headers = {
+            normalize_text(value): index
+            for index, value in enumerate(row)
+            if normalize_text(value)
+        }
+
+        if REQUIRED_TASK_COLUMNS.issubset(headers):
+            return row_number, headers
+
+    return None, None
+
+
+def read_completed_tasks(file_path):
+    workbook = load_workbook(
+        file_path,
+        read_only=True,
+        data_only=True,
+    )
+
+    completed_rows = []
+    sheets_with_data = 0
+
+    for worksheet in workbook.worksheets:
+        worksheet.reset_dimensions()
+        header_row_number, headers = find_header_row(worksheet)
+
+        if headers is None:
+            continue
+
+        sheets_with_data += 1
+        highest_index = max(headers.values())
+
+        for row in worksheet.iter_rows(
+            min_row=header_row_number + 1,
+            values_only=True,
+        ):
+            if len(row) <= highest_index:
+                continue
+
+            status = normalize_text(row[headers["Status"]]).upper()
+
+            if status != "COMP":
+                continue
+
+            qualification = normalize_text(
+                row[headers["Qualification"]]
+            ).upper()
+            sso = normalize_text(row[headers["Change By"]])
+            completion_date = row[headers["Changed Date"]]
+            task_number = normalize_text(row[headers["Task Num"]])
+            technician_name = normalize_text(row[headers["Name"]])
+
+            first_value = normalize_text(row[0]) if row else ""
+            task_description = first_value
+
+            completed_rows.append(
+                {
+                    "SSO": sso,
+                    "Technician Name": technician_name,
+                    "Qualification": qualification,
+                    "PM Completion Date": completion_date,
+                    "Task Number": task_number,
+                    "Task Description": task_description,
+                    "Source File": file_path.name,
+                    "Source Sheet": worksheet.title,
+                }
+            )
+
+    workbook.close()
+    return completed_rows, sheets_with_data
+
+
+def main():
+    started = time.perf_counter()
+
+    print("=" * 70)
+    print("PM Qualification Activity Tracker - Completed Task Reader")
+    print("=" * 70)
+
+    if not CONFIG_FILE.exists():
+        print(f"ERROR: Configuration file not found: {CONFIG_FILE}")
+        return 1
+
+    task_files = get_task_files()
+    print(f"Task reports found: {len(task_files)}")
+
+    if not task_files:
+        print("ERROR: No task reports were found.")
+        return 1
+
+    try:
+        tracked_qualifications = load_tracked_qualifications()
+    except Exception as error:
+        print(f"ERROR: {error}")
+        return 1
+
+    all_completed_rows = []
+    file_results = []
+
+    for file_number, file_path in enumerate(task_files, start=1):
+        print()
+        print(f"[{file_number}/{len(task_files)}] Reading {file_path.name}...")
+        file_started = time.perf_counter()
+
+        try:
+            rows, sheets_with_data = read_completed_tasks(file_path)
+        except Exception as error:
+            print(f"ERROR: {file_path.name}: {error}")
+            return 1
+
+        file_seconds = time.perf_counter() - file_started
+        qualifications = sorted(
+            {
+                row["Qualification"]
+                for row in rows
+                if row["Qualification"]
+            }
+        )
+
+        all_completed_rows.extend(rows)
+        file_results.append(
+            {
+                "Source File": file_path.name,
+                "Worksheets With Data": sheets_with_data,
+                "COMP Rows": len(rows),
+                "Qualifications": ", ".join(qualifications),
+                "Processing Seconds": round(file_seconds, 1),
+            }
+        )
+
+        print(f"  Worksheets processed: {sheets_with_data:,}")
+        print(f"  COMP rows collected: {len(rows):,}")
+        print(
+            "  Qualifications: "
+            + (", ".join(qualifications) if qualifications else "None")
+        )
+        print(f"  Processing time: {file_seconds:,.1f} seconds")
+
+    completed = pd.DataFrame(all_completed_rows)
+
+    if completed.empty:
+        print()
+        print("ERROR: No completed task rows were found.")
+        return 1
+
+    completed["SSO"] = completed["SSO"].astype(str).str.strip()
+    completed["Qualification"] = (
+        completed["Qualification"].astype(str).str.strip().str.upper()
+    )
+    completed["PM Completion Date"] = pd.to_datetime(
+        completed["PM Completion Date"],
+        format="mixed",
+        errors="coerce",
+    )
+
+    exact_duplicate_mask = completed.duplicated(
+        subset=[
+            "SSO",
+            "Qualification",
+            "PM Completion Date",
+            "Task Number",
+            "Task Description",
+        ],
+        keep=False,
+    )
+
+    qualifications_found = set(
+        completed.loc[
+            completed["Qualification"] != "",
+            "Qualification",
+        ]
+    )
+    missing_qualifications = sorted(
+        tracked_qualifications.difference(qualifications_found)
+    )
+    unknown_qualifications = sorted(
+        qualifications_found.difference(tracked_qualifications)
+    )
+
+    summary = (
+        completed.groupby("Qualification", dropna=False)
+        .agg(
+            COMP_Rows=("Task Number", "size"),
+            Unique_Technicians=("SSO", "nunique"),
+            Earliest_Completion=("PM Completion Date", "min"),
+            Latest_Completion=("PM Completion Date", "max"),
+            Invalid_Dates=(
+                "PM Completion Date",
+                lambda values: int(values.isna().sum()),
+            ),
+        )
+        .reset_index()
+        .sort_values("Qualification")
+    )
+
+    LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(SUMMARY_FILE, index=False)
+
+    total_seconds = time.perf_counter() - started
+
+    print()
+    print("Summary")
+    print("-------")
+    print(f"Task reports processed: {len(task_files)}")
+    print(f"COMP rows combined: {len(completed):,}")
+    print(f"Unique task technicians: {completed['SSO'].nunique():,}")
+    print(
+        "Exact duplicate task rows: "
+        f"{int(exact_duplicate_mask.sum()):,}"
+    )
+    print(
+        "Invalid completion dates: "
+        f"{int(completed['PM Completion Date'].isna().sum()):,}"
+    )
+    print(f"Total processing time: {total_seconds:,.1f} seconds")
+    print(f"Summary file created: {SUMMARY_FILE}")
+
+    print()
+    print("Qualifications found")
+    print("--------------------")
+
+    for qualification in sorted(qualifications_found):
+        print(f"- {qualification}")
+
+    if missing_qualifications:
+        print()
+        print("WARNING: Missing tracked task qualifications")
+        print("--------------------------------------------")
+        for qualification in missing_qualifications:
+            print(f"- {qualification}")
+
+    if unknown_qualifications:
+        print()
+        print("ERROR: Unknown task qualifications")
+        print("----------------------------------")
+        for qualification in unknown_qualifications:
+            print(f"- {qualification}")
+        return 1
+
+    print()
+    print("Completed-task reading finished successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+================================================================================
+FILE: Scripts\cycle_history.py
+================================================================================
+
+from pathlib import Path
+from datetime import datetime
+
+import pandas as pd
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_FOLDER = PROJECT_ROOT / "Data"
+HISTORY_FILE = DATA_FOLDER / "cycle_history.csv"
+
+KEY_COLUMNS = [
+    "SSO",
+    "Qualification",
+    "Cycle Start Date",
+    "Cycle Due Date",
+]
+
+HISTORY_COLUMNS = [
+    "SSO",
+    "Qualification",
+    "Cycle Number",
+    "Cycle Start Date",
+    "Cycle Due Date",
+    "PM Completion Date",
+    "Task Number",
+    "Task Description",
+    "Task Source File",
+    "First Recorded Date",
+    "Last Confirmed Date",
+]
+
+
+def _normalize_dates(dataframe):
+    result = dataframe.copy()
+
+    for column in ["Cycle Start Date", "Cycle Due Date"]:
+        result[column] = pd.to_datetime(
+            result[column], format="mixed", errors="coerce"
+        ).dt.normalize()
+
+    result["PM Completion Date"] = pd.to_datetime(
+        result["PM Completion Date"], format="mixed", errors="coerce"
+    )
+
+    for column in ["First Recorded Date", "Last Confirmed Date"]:
+        if column in result.columns:
+            result[column] = pd.to_datetime(
+                result[column], format="mixed", errors="coerce"
+            ).dt.normalize()
+
+    result["SSO"] = result["SSO"].astype(str).str.strip()
+    result["Qualification"] = (
+        result["Qualification"].astype(str).str.strip().str.upper()
+    )
+    return result
+
+
+def load_cycle_history():
+    if not HISTORY_FILE.exists():
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
+
+    history = pd.read_csv(HISTORY_FILE, dtype={"SSO": str})
+
+    missing = set(HISTORY_COLUMNS).difference(history.columns)
+    if missing:
+        raise ValueError(
+            "Cycle history is missing columns: "
+            + ", ".join(sorted(missing))
+        )
+
+    history = _normalize_dates(history[HISTORY_COLUMNS])
+
+    if history[KEY_COLUMNS].isna().any().any():
+        raise ValueError(
+            "Cycle history contains an invalid SSO, qualification, "
+            "cycle start date, or cycle due date."
+        )
+
+    duplicate_keys = history.duplicated(subset=KEY_COLUMNS, keep=False)
+    if duplicate_keys.any():
+        raise ValueError(
+            "Cycle history contains duplicate cycle keys. "
+            "Review Data/cycle_history.csv before continuing."
+        )
+
+    return history
+
+
+def _key_from_record(record):
+    return (
+        str(record["SSO"]).strip(),
+        str(record["Qualification"]).strip().upper(),
+        pd.Timestamp(record["Cycle Start Date"]).normalize(),
+        pd.Timestamp(record["Cycle Due Date"]).normalize(),
+    )
+
+
+def apply_cycle_history(results):
+    """
+    Restore historical completed-cycle evidence and prepare the next history state.
+
+    Only Good / Completed cycles are stored permanently. Temporary statuses are
+    always recalculated from current qualification dates, task inputs, and today.
+    """
+    current = results.copy()
+    current["SSO"] = current["SSO"].astype(str).str.strip()
+    current["Qualification"] = (
+        current["Qualification"].astype(str).str.strip().str.upper()
+    )
+    current["Cycle Start Date"] = pd.to_datetime(
+        current["Cycle Start Date"], format="mixed", errors="coerce"
+    ).dt.normalize()
+    current["Cycle Due Date"] = pd.to_datetime(
+        current["Cycle Due Date"], format="mixed", errors="coerce"
+    ).dt.normalize()
+    current["PM Completion Date"] = pd.to_datetime(
+        current["PM Completion Date"], format="mixed", errors="coerce"
+    )
+
+    history = load_cycle_history()
+    history_by_key = {
+        _key_from_record(record): record
+        for record in history.to_dict("records")
+    }
+
+    source_completed_keys = set()
+    restored_count = 0
+    newer_source_count = 0
+
+    for index, row in current.iterrows():
+        key = _key_from_record(row)
+        current_completed = (
+            row["Cycle Result"] == "Good / Completed"
+            and pd.notna(row["PM Completion Date"])
+        )
+
+        if current_completed:
+            source_completed_keys.add(key)
+
+        historical = history_by_key.get(key)
+        if historical is None:
+            continue
+
+        historical_date = historical["PM Completion Date"]
+        current_date = row["PM Completion Date"]
+
+        use_history = (
+            not current_completed
+            or pd.isna(current_date)
+            or historical_date > current_date
+        )
+
+        if use_history:
+            current.at[index, "PM Completion Date"] = historical_date
+            current.at[index, "Task Number"] = historical["Task Number"]
+            current.at[index, "Task Description"] = historical[
+                "Task Description"
+            ]
+            current.at[index, "Task Source File"] = historical[
+                "Task Source File"
+            ]
+            current.at[index, "Task Data Available"] = "Historical Evidence"
+            current.at[index, "Cycle Result"] = "Good / Completed"
+            restored_count += 1
+        elif current_completed and current_date > historical_date:
+            newer_source_count += 1
+
+    run_date = pd.Timestamp.today().normalize()
+    existing_first_recorded = {
+        key: record["First Recorded Date"]
+        for key, record in history_by_key.items()
+    }
+    existing_last_confirmed = {
+        key: record["Last Confirmed Date"]
+        for key, record in history_by_key.items()
+    }
+
+    completed = current[
+        (current["Cycle Result"] == "Good / Completed")
+        & current["PM Completion Date"].notna()
+    ].copy()
+
+    history_rows = []
+    for record in completed.to_dict("records"):
+        key = _key_from_record(record)
+        first_recorded = existing_first_recorded.get(key, run_date)
+
+        if key in source_completed_keys:
+            last_confirmed = run_date
+        else:
+            last_confirmed = existing_last_confirmed.get(key, first_recorded)
+
+        history_rows.append(
+            {
+                "SSO": str(record["SSO"]).strip(),
+                "Qualification": str(record["Qualification"]).strip().upper(),
+                "Cycle Number": int(record["Cycle Number"]),
+                "Cycle Start Date": record["Cycle Start Date"],
+                "Cycle Due Date": record["Cycle Due Date"],
+                "PM Completion Date": record["PM Completion Date"],
+                "Task Number": record.get("Task Number", ""),
+                "Task Description": record.get("Task Description", ""),
+                "Task Source File": record.get("Task Source File", ""),
+                "First Recorded Date": first_recorded,
+                "Last Confirmed Date": last_confirmed,
+            }
+        )
+
+    updated_history = pd.DataFrame(history_rows, columns=HISTORY_COLUMNS)
+    updated_history = updated_history.sort_values(
+        ["Qualification", "SSO", "Cycle Start Date"], kind="stable"
+    )
+
+    stats = {
+        "History records loaded": len(history),
+        "Completed cycles in updated history": len(updated_history),
+        "Cycles restored from history": restored_count,
+        "Cycles updated by newer source task": newer_source_count,
+    }
+
+    return current, updated_history, stats
+
+
+def save_cycle_history(history):
+    """Save history atomically only after report generation succeeds."""
+    DATA_FOLDER.mkdir(parents=True, exist_ok=True)
+    temporary_file = DATA_FOLDER / "cycle_history.tmp"
+
+    history_to_save = history.copy()
+    history_to_save.to_csv(
+        temporary_file,
+        index=False,
+        date_format="%Y-%m-%d %H:%M:%S",
+    )
+
+    temporary_file.replace(HISTORY_FILE)
+
+================================================================================
+FILE: Scripts\cycle_processor.py
+================================================================================
+
+from pathlib import Path
+import re
+import sys
+import time
+import warnings
+
+import pandas as pd
+from openpyxl import load_workbook
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+QUALIFICATION_FOLDER = PROJECT_ROOT / "Input" / "Qualification"
+TASK_FOLDER = PROJECT_ROOT / "Input" / "Tasks"
+CONFIG_FILE = PROJECT_ROOT / "Config" / "qualification_mapping.csv"
+LOG_FOLDER = PROJECT_ROOT / "Logs"
+VALIDATION_FILE = LOG_FOLDER / "cycle_validation.csv"
+SUMMARY_FILE = LOG_FOLDER / "cycle_summary.csv"
+
+TODAY = pd.Timestamp.today().normalize()
+DUE_SOON_DAYS = 30
+SUPPORTED_EXTENSIONS = {".xlsx", ".xlsm"}
+
+REQUIRED_TASK_COLUMNS = {
+    "Task Num",
+    "Status",
+    "Changed Date",
+    "Change By",
+    "Name",
+    "Qualification",
+}
+
+warnings.filterwarnings(
+    "ignore",
+    message="Workbook contains no default style*",
+    category=UserWarning,
+)
+
+
+def normalize_text(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def excel_files(folder):
+    return sorted(
+        [
+            path
+            for path in folder.iterdir()
+            if path.is_file()
+            and not path.name.startswith("~$")
+            and path.suffix.lower() in SUPPORTED_EXTENSIONS
+        ],
+        key=lambda path: path.name.lower(),
+    )
+
+
+def load_mapping():
+    mapping = pd.read_csv(CONFIG_FILE, dtype=str).fillna("")
+    mapping.columns = [normalize_text(column) for column in mapping.columns]
+
+    required = {"Area", "Venue", "Qualification", "Discipline", "Tracked"}
+    missing = required.difference(mapping.columns)
+    if missing:
+        raise ValueError(
+            "Configuration is missing columns: " + ", ".join(sorted(missing))
+        )
+
+    for column in required:
+        mapping[column] = mapping[column].astype(str).str.strip()
+
+    mapping["Qualification"] = mapping["Qualification"].str.upper()
+    mapping["Tracked"] = mapping["Tracked"].str.lower()
+    return mapping[mapping["Tracked"] == "yes"].copy()
+
+
+def qualification_from_filename(file_path, approved_codes):
+    filename = file_path.stem.upper()
+    matches = [code for code in approved_codes if code in filename]
+
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise ValueError("qualification code was not found in filename")
+    raise ValueError("more than one qualification code was found in filename")
+
+
+def read_qualifications(mapping):
+    all_files = excel_files(QUALIFICATION_FOLDER)
+    files = [
+    file_path
+    for file_path in all_files
+    if "MOD0" not in file_path.stem.upper()
+]
+    approved_codes = set(mapping["Qualification"])
+    reports = []
+    detected_codes = []
+
+    if not files:
+        raise ValueError("No qualification reports were found")
+
+    for file_path in files:
+        qualification = qualification_from_filename(file_path, approved_codes)
+        detected_codes.append(qualification)
+
+        mapping_rows = mapping[mapping["Qualification"] == qualification]
+        if len(mapping_rows) != 1:
+            raise ValueError(
+                f"{qualification} must have exactly one configuration row"
+            )
+        mapping_row = mapping_rows.iloc[0]
+
+        workbook = pd.ExcelFile(file_path, engine="openpyxl")
+        if "List of Labor" in workbook.sheet_names:
+            sheet_name = "List of Labor"
+        elif len(workbook.sheet_names) == 1:
+            sheet_name = workbook.sheet_names[0]
+        else:
+            raise ValueError(
+                f"{file_path.name}: worksheet 'List of Labor' was not found"
+            )
+
+        report = pd.read_excel(
+            file_path,
+            sheet_name=sheet_name,
+            engine="openpyxl",
+            dtype={"Labor": "string"},
+        )
+        report.columns = [normalize_text(column) for column in report.columns]
+
+        required = {"Labor", "Name", "Effective Date", "Status"}
+        missing = required.difference(report.columns)
+        if missing:
+            raise ValueError(
+                f"{file_path.name}: missing columns: {', '.join(sorted(missing))}"
+            )
+
+        report = report.dropna(how="all").copy()
+        report["SSO"] = report["Labor"].astype("string").str.strip()
+        report["Technician Name"] = report["Name"].astype("string").str.strip()
+        report["Qualification Date"] = pd.to_datetime(
+            report["Effective Date"], format="mixed", errors="coerce"
+        ).dt.normalize()
+        report["Qualification Status"] = (
+            report["Status"].astype("string").str.strip().str.upper()
+        )
+        report["Qualification"] = qualification
+        report["Area"] = mapping_row["Area"]
+        report["Venue"] = mapping_row["Venue"]
+        report["Discipline"] = mapping_row["Discipline"]
+        report["Qualification Source File"] = file_path.name
+
+        reports.append(
+            report[
+                [
+                    "Area",
+                    "Venue",
+                    "Discipline",
+                    "Qualification",
+                    "SSO",
+                    "Technician Name",
+                    "Qualification Date",
+                    "Qualification Status",
+                    "Qualification Source File",
+                ]
+            ]
+        )
+
+    duplicate_codes = sorted(
+        {code for code in detected_codes if detected_codes.count(code) > 1}
+    )
+    if duplicate_codes:
+        raise ValueError(
+            "Duplicate qualification reports: " + ", ".join(duplicate_codes)
+        )
+
+    missing_codes = sorted(approved_codes.difference(detected_codes))
+    if missing_codes:
+        raise ValueError(
+            "Missing qualification reports: " + ", ".join(missing_codes)
+        )
+
+    combined = pd.concat(reports, ignore_index=True)
+
+    if combined["Qualification Date"].isna().any():
+        count = int(combined["Qualification Date"].isna().sum())
+        raise ValueError(f"Invalid qualification dates found: {count}")
+
+    duplicate_mask = combined.duplicated(
+        subset=["SSO", "Qualification"], keep=False
+    )
+    if duplicate_mask.any():
+        count = int(duplicate_mask.sum())
+        raise ValueError(f"Duplicate SSO and qualification rows found: {count}")
+
+    return combined
+
+
+def find_header_row(worksheet, maximum_rows=15):
+    for row_number, row in enumerate(
+        worksheet.iter_rows(
+            min_row=1,
+            max_row=maximum_rows,
+            values_only=True,
+        ),
+        start=1,
+    ):
+        headers = {
+            normalize_text(value): index
+            for index, value in enumerate(row)
+            if normalize_text(value)
+        }
+        if REQUIRED_TASK_COLUMNS.issubset(headers):
+            return row_number, headers
+
+    return None, None
+
+
+def read_tasks():
+    files = excel_files(TASK_FOLDER)
+    rows = []
+
+    if not files:
+        raise ValueError("No task reports were found")
+
+    for file_number, file_path in enumerate(files, start=1):
+        started = time.perf_counter()
+        print(f"[{file_number}/{len(files)}] Reading {file_path.name}...")
+
+        workbook = load_workbook(file_path, read_only=True, data_only=True)
+        file_count = 0
+
+        for worksheet in workbook.worksheets:
+            worksheet.reset_dimensions()
+            header_row_number, headers = find_header_row(worksheet)
+            if headers is None:
+                continue
+
+            highest_index = max(headers.values())
+
+            for row in worksheet.iter_rows(
+                min_row=header_row_number + 1,
+                values_only=True,
+            ):
+                if len(row) <= highest_index:
+                    continue
+
+                status = normalize_text(row[headers["Status"]]).upper()
+                if status != "COMP":
+                    continue
+
+                qualification = normalize_text(
+                    row[headers["Qualification"]]
+                ).upper()
+                sso = normalize_text(row[headers["Change By"]])
+                completion_date = row[headers["Changed Date"]]
+                task_number = normalize_text(row[headers["Task Num"]])
+                technician_name = normalize_text(row[headers["Name"]])
+                task_description = normalize_text(row[0]) if row else ""
+
+                rows.append(
+                    {
+                        "SSO": sso,
+                        "Task Technician Name": technician_name,
+                        "Qualification": qualification,
+                        "PM Completion Date": completion_date,
+                        "Task Number": task_number,
+                        "Task Description": task_description,
+                        "Task Source File": file_path.name,
+                        "Task Source Sheet": worksheet.title,
+                    }
+                )
+                file_count += 1
+
+        workbook.close()
+        seconds = time.perf_counter() - started
+        print(f"  COMP rows collected: {file_count:,}")
+        print(f"  Processing time: {seconds:,.1f} seconds")
+
+    tasks = pd.DataFrame(rows)
+    if tasks.empty:
+        return tasks, set()
+
+    tasks["SSO"] = tasks["SSO"].astype(str).str.strip()
+    tasks["Qualification"] = (
+        tasks["Qualification"].astype(str).str.strip().str.upper()
+    )
+    tasks["PM Completion Date"] = pd.to_datetime(
+        tasks["PM Completion Date"], format="mixed", errors="coerce"
+    )
+
+    tasks = tasks.dropna(subset=["PM Completion Date"])
+    tasks = tasks[tasks["SSO"] != ""].copy()
+    tasks = tasks.drop_duplicates(
+        subset=[
+            "SSO",
+            "Qualification",
+            "PM Completion Date",
+            "Task Number",
+            "Task Description",
+        ]
+    )
+
+    qualifications_found = set(tasks["Qualification"].dropna().unique())
+    return tasks, qualifications_found
+
+
+def add_years(date_value, years):
+    return date_value + pd.DateOffset(years=int(years))
+
+
+def build_cycles(qualifications):
+    cycle_rows = []
+
+    for record in qualifications.to_dict("records"):
+        start = pd.Timestamp(record["Qualification Date"]).normalize()
+        cycle_number = 1
+
+        while start <= TODAY:
+            due = add_years(start, 1)
+            cycle_record = record.copy()
+            cycle_record["Cycle Number"] = cycle_number
+            cycle_record["Cycle Start Date"] = start
+            cycle_record["Cycle Due Date"] = due
+            cycle_rows.append(cycle_record)
+
+            cycle_number += 1
+            start = add_years(record["Qualification Date"], cycle_number - 1)
+
+    return pd.DataFrame(cycle_rows)
+
+
+def assign_tasks_to_cycles(cycles, tasks, qualifications_with_tasks):
+    task_groups = {
+        key: group.sort_values("PM Completion Date")
+        for key, group in tasks.groupby(["SSO", "Qualification"])
+    }
+
+    output_rows = []
+
+    for cycle in cycles.to_dict("records"):
+        key = (str(cycle["SSO"]), cycle["Qualification"])
+        task_data_available = cycle["Qualification"] in qualifications_with_tasks
+        latest_task = None
+
+        if task_data_available and key in task_groups:
+            candidates = task_groups[key]
+            valid = candidates[
+                (candidates["PM Completion Date"].dt.normalize() >= cycle["Cycle Start Date"])
+                & (candidates["PM Completion Date"].dt.normalize() <= cycle["Cycle Due Date"])
+            ]
+            if not valid.empty:
+                latest_task = valid.iloc[-1]
+
+        days_remaining = int((cycle["Cycle Due Date"] - TODAY).days)
+
+        if not task_data_available:
+            result = "Task Data Missing"
+        elif latest_task is not None:
+            result = "Good / Completed"
+        elif days_remaining < 0:
+            result = "Requalification Needed"
+        elif days_remaining <= DUE_SOON_DAYS:
+            result = "Due Soon"
+        else:
+            result = "Good"
+
+        output = cycle.copy()
+        output["Task Data Available"] = "Yes" if task_data_available else "No"
+        output["PM Completion Date"] = (
+            latest_task["PM Completion Date"] if latest_task is not None else pd.NaT
+        )
+        output["Task Description"] = (
+            latest_task["Task Description"] if latest_task is not None else ""
+        )
+        output["Task Number"] = (
+            latest_task["Task Number"] if latest_task is not None else ""
+        )
+        output["Task Source File"] = (
+            latest_task["Task Source File"] if latest_task is not None else ""
+        )
+        output["Days Remaining"] = days_remaining
+        output["Cycle Result"] = result
+        output_rows.append(output)
+
+    result = pd.DataFrame(output_rows)
+
+    columns = [
+        "Area",
+        "Venue",
+        "Discipline",
+        "Qualification",
+        "SSO",
+        "Technician Name",
+        "Qualification Date",
+        "Qualification Status",
+        "Cycle Number",
+        "Cycle Start Date",
+        "Cycle Due Date",
+        "Task Data Available",
+        "PM Completion Date",
+        "Task Description",
+        "Task Number",
+        "Days Remaining",
+        "Cycle Result",
+        "Qualification Source File",
+        "Task Source File",
+    ]
+
+    return result[columns].sort_values(
+        ["Venue", "Qualification", "Technician Name", "Cycle Number"],
+        kind="stable",
+    )
+
+
+def main():
+    started = time.perf_counter()
+
+    print("=" * 70)
+    print("PM Qualification Activity Tracker - Cycle Processor")
+    print("=" * 70)
+    print(f"Processing date: {TODAY.date()}")
+
+    try:
+        mapping = load_mapping()
+        qualifications = read_qualifications(mapping)
+    except Exception as error:
+        print(f"ERROR reading qualification reports: {error}")
+        return 1
+
+    print(f"Qualification records loaded: {len(qualifications):,}")
+
+    try:
+        tasks, qualifications_with_tasks = read_tasks()
+    except Exception as error:
+        print(f"ERROR reading task reports: {error}")
+        return 1
+
+    print(f"Completed task rows loaded: {len(tasks):,}")
+
+    cycles = build_cycles(qualifications)
+    results = assign_tasks_to_cycles(
+        cycles,
+        tasks,
+        qualifications_with_tasks,
+    )
+
+    LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+    results.to_csv(VALIDATION_FILE, index=False, date_format="%Y-%m-%d %H:%M:%S")
+
+    summary = (
+        results.groupby(
+            ["Venue", "Qualification", "Discipline", "Cycle Result"],
+            dropna=False,
+        )
+        .size()
+        .reset_index(name="Cycle Records")
+        .sort_values(["Venue", "Qualification", "Cycle Result"])
+    )
+    summary.to_csv(SUMMARY_FILE, index=False)
+
+    print()
+    print("Summary")
+    print("-------")
+    print(f"Qualification records: {len(qualifications):,}")
+    print(f"Annual cycle records: {len(results):,}")
+    print(f"Completed task rows available: {len(tasks):,}")
+    print(f"Technicians: {results['SSO'].nunique():,}")
+
+    print()
+    print("Cycle results")
+    print("-------------")
+    for status, count in results["Cycle Result"].value_counts().items():
+        print(f"{status}: {count:,}")
+
+    missing = sorted(
+        set(mapping["Qualification"]).difference(qualifications_with_tasks)
+    )
+    if missing:
+        print()
+        print("Qualifications with missing task data")
+        print("-------------------------------------")
+        for qualification in missing:
+            print(f"- {qualification}")
+
+    print()
+    print(f"Validation file: {VALIDATION_FILE}")
+    print(f"Summary file: {SUMMARY_FILE}")
+    print(f"Total processing time: {time.perf_counter() - started:,.1f} seconds")
+    print()
+    print("Cycle processing completed successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+================================================================================
+FILE: Scripts\input_scanner.py
+================================================================================
+
+from pathlib import Path
+import sys
+
+import pandas as pd
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+QUALIFICATION_FOLDER = PROJECT_ROOT / "Input" / "Qualification"
+TASK_FOLDER = PROJECT_ROOT / "Input" / "Tasks"
+CONFIG_FILE = PROJECT_ROOT / "Config" / "qualification_mapping.csv"
+
+SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
+
+
+def readable_size(size_bytes: int) -> str:
+    size_mb = size_bytes / (1024 * 1024)
+
+    if size_mb >= 1:
+        return f"{size_mb:,.1f} MB"
+
+    size_kb = size_bytes / 1024
+    return f"{size_kb:,.1f} KB"
+
+
+def find_excel_files(folder: Path) :
+    files = []
+
+    for file_path in folder.iterdir():
+        if not file_path.is_file():
+            continue
+
+        if file_path.name.startswith("~$"):
+            continue
+
+        if file_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            continue
+
+        files.append(file_path)
+
+    return sorted(files, key=lambda path: path.name.lower())
+
+
+def display_files(title: str, files: list[Path]) -> None:
+    print()
+    print(title)
+    print("-" * len(title))
+
+    if not files:
+        print("No Excel reports found.")
+        return
+
+    for number, file_path in enumerate(files, start=1):
+        print(
+            f"{number}. {file_path.name} "
+            f"({readable_size(file_path.stat().st_size)})"
+        )
+
+
+def main() -> int:
+    print("=" * 55)
+    print("PM Qualification Activity Tracker - Input Scanner")
+    print("=" * 55)
+
+    required_folders = [
+        QUALIFICATION_FOLDER,
+        TASK_FOLDER,
+        PROJECT_ROOT / "Output",
+        PROJECT_ROOT / "Archive",
+        PROJECT_ROOT / "Logs",
+    ]
+
+    missing_folders = [
+        folder for folder in required_folders if not folder.exists()
+    ]
+
+    if missing_folders:
+        print()
+        print("ERROR: Required folders are missing:")
+
+        for folder in missing_folders:
+            print(f"  - {folder}")
+
+        return 1
+
+    if not CONFIG_FILE.exists():
+        print()
+        print("ERROR: Configuration file not found:")
+        print(f"  {CONFIG_FILE}")
+        return 1
+
+    mapping = pd.read_csv(CONFIG_FILE)
+
+    required_columns = {
+        "Area",
+        "Venue",
+        "Qualification",
+        "Discipline",
+        "Tracked",
+    }
+
+    missing_columns = required_columns.difference(mapping.columns)
+
+    if missing_columns:
+        print()
+        print("ERROR: Configuration columns are missing:")
+
+        for column in sorted(missing_columns):
+            print(f"  - {column}")
+
+        return 1
+
+    tracked = mapping[
+        mapping["Tracked"].astype(str).str.strip().str.lower() == "yes"
+    ]
+
+    excluded = mapping[
+        mapping["Tracked"].astype(str).str.strip().str.lower() != "yes"
+    ]
+
+    qualification_files = find_excel_files(QUALIFICATION_FOLDER)
+    task_files = find_excel_files(TASK_FOLDER)
+
+    print()
+    print(f"Project folder: {PROJECT_ROOT}")
+    print(f"Configuration records: {len(mapping)}")
+    print(f"Tracked qualifications: {len(tracked)}")
+    print(f"Excluded qualifications: {len(excluded)}")
+
+    display_files("Qualification Reports", qualification_files)
+    display_files("Task Reports", task_files)
+
+    print()
+    print("Summary")
+    print("-------")
+    print(f"Qualification reports found: {len(qualification_files)}")
+    print(f"Task reports found: {len(task_files)}")
+
+    if not qualification_files:
+        print("WARNING: No qualification reports are currently available.")
+
+    if not task_files:
+        print("WARNING: No task reports are currently available.")
+
+    print()
+    print("Input scan completed successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+================================================================================
+FILE: Scripts\qualification_reader.py
+================================================================================
+
+from pathlib import Path
+import re
+import sys
+import warnings
+
+import pandas as pd
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+QUALIFICATION_FOLDER = PROJECT_ROOT / "Input" / "Qualification"
+CONFIG_FILE = PROJECT_ROOT / "Config" / "qualification_mapping.csv"
+LOG_FOLDER = PROJECT_ROOT / "Logs"
+SUMMARY_FILE = LOG_FOLDER / "qualification_summary.csv"
+
+SUPPORTED_EXTENSIONS = {".xlsx", ".xlsm"}
+REQUIRED_REPORT_COLUMNS = {
+    "Labor",
+    "Name",
+    "Effective Date",
+    "Status",
+}
+REQUIRED_CONFIG_COLUMNS = {
+    "Area",
+    "Venue",
+    "Qualification",
+    "Discipline",
+    "Tracked",
+}
+
+warnings.filterwarnings(
+    "ignore",
+    message="Workbook contains no default style*",
+    category=UserWarning,
+)
+
+
+def get_qualification_files():
+    files = [
+    file_path
+    for file_path in files
+    if "MOD0" not in file_path.stem.upper()
+]
+    return sorted(
+        [
+            file_path
+            for file_path in QUALIFICATION_FOLDER.iterdir()
+            if file_path.is_file()
+            and not file_path.name.startswith("~$")
+            and file_path.suffix.lower() in SUPPORTED_EXTENSIONS
+        ],
+        key=lambda file_path: file_path.name.lower(),
+    )
+
+
+def qualification_from_filename(file_path):
+    filename = file_path.stem.upper()
+
+    for qualification in [
+        "DUMOD1",
+        "CUMOD1",
+        "CUMOD2",
+        "CUMOD3",
+        "UCMOD1",
+        "UCMOD2",
+        "UCMOD3",
+        "UCMOD4",
+    ]:
+        if qualification in filename:
+            return qualification
+
+    return None
+
+
+def load_mapping():
+    mapping = pd.read_csv(CONFIG_FILE, dtype=str).fillna("")
+    mapping.columns = [str(column).strip() for column in mapping.columns]
+
+    missing_columns = REQUIRED_CONFIG_COLUMNS.difference(mapping.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"Configuration is missing columns: {missing}")
+
+    for column in REQUIRED_CONFIG_COLUMNS:
+        mapping[column] = mapping[column].astype(str).str.strip()
+
+    mapping["Qualification"] = mapping["Qualification"].str.upper()
+    mapping["Tracked"] = mapping["Tracked"].str.lower()
+    return mapping
+
+
+def read_qualification_report(file_path, qualification, mapping_row):
+    workbook = pd.ExcelFile(file_path, engine="openpyxl")
+
+    if "List of Labor" in workbook.sheet_names:
+        sheet_name = "List of Labor"
+    elif len(workbook.sheet_names) == 1:
+        sheet_name = workbook.sheet_names[0]
+    else:
+        available = ", ".join(workbook.sheet_names)
+        raise ValueError(
+            f"Expected 'List of Labor' worksheet. Available worksheets: {available}"
+        )
+
+    report = pd.read_excel(
+        file_path,
+        sheet_name=sheet_name,
+        engine="openpyxl",
+        dtype={"Labor": "string"},
+    )
+    report.columns = [str(column).strip() for column in report.columns]
+
+    missing_columns = REQUIRED_REPORT_COLUMNS.difference(report.columns)
+    if missing_columns:
+        missing = ", ".join(sorted(missing_columns))
+        raise ValueError(f"Missing required columns: {missing}")
+
+    report = report.dropna(how="all").copy()
+    report["Labor"] = report["Labor"].astype("string").str.strip()
+    report["Name"] = report["Name"].astype("string").str.strip()
+    report["Status"] = report["Status"].astype("string").str.strip().str.upper()
+    report["Effective Date"] = pd.to_datetime(
+    report["Effective Date"],
+    format="mixed",
+    errors="coerce",
+)
+
+    report["Qualification"] = qualification
+    report["Area"] = mapping_row["Area"]
+    report["Venue"] = mapping_row["Venue"]
+    report["Discipline"] = mapping_row["Discipline"]
+    report["Source File"] = file_path.name
+
+    return report
+
+
+def main():
+    print("=" * 70)
+    print("PM Qualification Activity Tracker - Qualification Reader")
+    print("=" * 70)
+
+    if not CONFIG_FILE.exists():
+        print(f"ERROR: Configuration file not found: {CONFIG_FILE}")
+        return 1
+
+    files = get_qualification_files()
+    print(f"Qualification reports found: {len(files)}")
+
+    if not files:
+        print("ERROR: No qualification reports were found.")
+        return 1
+
+    try:
+        mapping = load_mapping()
+    except Exception as error:
+        print(f"ERROR: {error}")
+        return 1
+
+    tracked_mapping = mapping[mapping["Tracked"] == "yes"].copy()
+    tracked_codes = set(tracked_mapping["Qualification"])
+
+    reports = []
+    errors = []
+    detected_codes = []
+
+    for file_path in files:
+        qualification = qualification_from_filename(file_path)
+
+        if qualification is None:
+            errors.append(
+                f"{file_path.name}: qualification code was not found in filename"
+            )
+            continue
+
+        detected_codes.append(qualification)
+
+        matching_rows = tracked_mapping[
+            tracked_mapping["Qualification"] == qualification
+        ]
+
+        if matching_rows.empty:
+            errors.append(
+                f"{file_path.name}: {qualification} is not an approved tracked qualification"
+            )
+            continue
+
+        if len(matching_rows) > 1:
+            errors.append(
+                f"{file_path.name}: duplicate configuration rows for {qualification}"
+            )
+            continue
+
+        mapping_row = matching_rows.iloc[0]
+
+        try:
+            report = read_qualification_report(
+                file_path,
+                qualification,
+                mapping_row,
+            )
+            reports.append(report)
+            active_count = int((report["Status"] == "ACTIVE").sum())
+            inactive_count = int((report["Status"] == "INACTIVE").sum())
+            invalid_dates = int(report["Effective Date"].isna().sum())
+
+            print()
+            print(f"{file_path.name}")
+            print(f"  Qualification: {qualification}")
+            print(f"  Venue: {mapping_row['Venue']}")
+            print(f"  Discipline: {mapping_row['Discipline']}")
+            print(f"  Records: {len(report):,}")
+            print(f"  Active: {active_count:,}")
+            print(f"  Inactive: {inactive_count:,}")
+            print(f"  Invalid qualification dates: {invalid_dates:,}")
+
+        except Exception as error:
+            errors.append(f"{file_path.name}: {error}")
+
+    duplicate_input_codes = sorted(
+        {
+            code
+            for code in detected_codes
+            if detected_codes.count(code) > 1
+        }
+    )
+
+    missing_tracked_codes = sorted(tracked_codes.difference(detected_codes))
+
+    if duplicate_input_codes:
+        errors.append(
+            "Duplicate qualification report codes found: "
+            + ", ".join(duplicate_input_codes)
+        )
+
+    if missing_tracked_codes:
+        errors.append(
+            "Missing tracked qualification reports: "
+            + ", ".join(missing_tracked_codes)
+        )
+
+    print()
+    print("Summary")
+    print("-------")
+    print(f"Reports successfully read: {len(reports)}")
+
+    if reports:
+        combined = pd.concat(reports, ignore_index=True)
+        duplicate_keys = combined.duplicated(
+            subset=["Labor", "Qualification"], keep=False
+        )
+
+        print(f"Qualification records combined: {len(combined):,}")
+        print(f"Unique technicians: {combined['Labor'].nunique(dropna=True):,}")
+        print(
+            "Duplicate SSO and qualification rows: "
+            f"{int(duplicate_keys.sum()):,}"
+        )
+
+        summary = (
+            combined.groupby(
+                ["Area", "Venue", "Qualification", "Discipline"],
+                dropna=False,
+            )
+            .agg(
+                Records=("Labor", "size"),
+                Unique_Technicians=("Labor", "nunique"),
+                Active=("Status", lambda values: int((values == "ACTIVE").sum())),
+                Inactive=("Status", lambda values: int((values == "INACTIVE").sum())),
+                Invalid_Dates=("Effective Date", lambda values: int(values.isna().sum())),
+            )
+            .reset_index()
+        )
+
+        LOG_FOLDER.mkdir(parents=True, exist_ok=True)
+        summary.to_csv(SUMMARY_FILE, index=False)
+        print(f"Summary file created: {SUMMARY_FILE}")
+
+    if errors:
+        print()
+        print("ERRORS")
+        print("------")
+        for error in errors:
+            print(f"- {error}")
+        return 1
+
+    print()
+    print("Qualification report reading completed successfully.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+================================================================================
+FILE: Scripts\report_generator.py
+================================================================================
+
+from pathlib import Path
+import re
+import sys
+import time
+from cycle_history import apply_cycle_history, save_cycle_history
+
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import Alignment, Font, PatternFill
+
+from cycle_processor import (
+    TODAY,
+    assign_tasks_to_cycles,
+    build_cycles,
+    load_mapping,
+    read_qualifications,
+    read_tasks,
+)
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+OUTPUT_FOLDER = PROJECT_ROOT / "Output"
+MANUAL_ROSTER_FOLDER = PROJECT_ROOT / "Input" / "Manual roster"
+ANIMATION_ROSTER_FILE = MANUAL_ROSTER_FOLDER / "Animation Roster.xlsx"
+
+OUTPUT_FILES = {
+    "Wolf": "Wolf Qualification Tracker.xlsx",
+    "Darkmoor": "Darkmoor Qualification Tracker.xlsx",
+    "Unchained": "Unchained Qualification Tracker.xlsx",
+    "Animation": "Animation Qualification Tracker.xlsx",
+}
+
+STATUS_STYLES = {
+    "Good / Completed": ("C6EFCE", "006100"),
+    "Good": ("DDEBF7", "1F4E78"),
+    "Due Soon": ("FFF2CC", "7F6000"),
+    "Requalification Needed": ("F4CCCC", "9C0006"),
+    "Task Data Missing": ("E4DFEC", "5F497A"),
+}
+
+DISPLAY_COLUMNS = [
+    "Venue",
+    "Discipline",
+    "Qualification",
+    "SSO",
+    "Technician Name",
+    "Qualification Date",
+    "Qualification Status",
+    "Cycle Number",
+    "Cycle Start Date",
+    "Cycle Due Date",
+    "Task Data Available",
+    "PM Completion Date",
+    "Task Description",
+    "Task Number",
+    "Days Remaining",
+    "Cycle Result",
+]
+
+ROSTER_EXCEPTION_COLUMNS = [
+    "Exception Type",
+    "Roster Name",
+    "SSO",
+    "Official Maximo Name",
+    "Details",
+]
+
+
+def normalize_sso(value):
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+    if text.endswith(".0"):
+        text = text[:-2]
+    return text
+
+
+def normalized_name_tokens(value):
+    if pd.isna(value):
+        return []
+
+    text = str(value).upper().replace("(UDX)", " ")
+    return sorted(re.findall(r"[A-Z0-9]+", text))
+
+
+def read_animation_roster(qualifications):
+    if not ANIMATION_ROSTER_FILE.exists():
+        raise ValueError(
+            "Animation roster was not found. Expected: "
+            f"{ANIMATION_ROSTER_FILE}"
+        )
+
+    roster = pd.read_excel(
+        ANIMATION_ROSTER_FILE,
+        engine="openpyxl",
+        dtype={"ID": "string", "Name": "string"},
+    )
+    roster.columns = [str(column).strip() for column in roster.columns]
+
+    required_columns = {"Name", "ID"}
+    missing_columns = required_columns.difference(roster.columns)
+    if missing_columns:
+        raise ValueError(
+            "Animation roster is missing columns: "
+            + ", ".join(sorted(missing_columns))
+        )
+
+    roster = roster.dropna(how="all").copy()
+    roster["Roster Name"] = roster["Name"].fillna("").astype(str).str.strip()
+    roster["SSO"] = roster["ID"].apply(normalize_sso)
+
+    official = qualifications[
+        qualifications["Qualification"] == "UCMOD4"
+    ].copy()
+    official_by_sso = {
+        str(row["SSO"]): row
+        for row in official.to_dict("records")
+    }
+
+    exceptions = []
+
+    for row_number, row in roster.iterrows():
+        if not row["SSO"]:
+            exceptions.append(
+                {
+                    "Exception Type": "Blank or invalid SSO",
+                    "Roster Name": row["Roster Name"],
+                    "SSO": "",
+                    "Official Maximo Name": "",
+                    "Details": f"Roster row {row_number + 2} has no usable ID.",
+                }
+            )
+
+    nonblank = roster[roster["SSO"] != ""].copy()
+    duplicate_mask = nonblank.duplicated(subset=["SSO"], keep=False)
+
+    for _, row in nonblank[duplicate_mask].iterrows():
+        exceptions.append(
+            {
+                "Exception Type": "Duplicate roster SSO",
+                "Roster Name": row["Roster Name"],
+                "SSO": row["SSO"],
+                "Official Maximo Name": "",
+                "Details": "The SSO appears more than once in Animation Roster.xlsx.",
+            }
+        )
+
+    unique_roster = nonblank.drop_duplicates(subset=["SSO"], keep="first")
+    matched_ssos = set()
+
+    for _, row in unique_roster.iterrows():
+        sso = row["SSO"]
+        official_row = official_by_sso.get(sso)
+
+        if official_row is None:
+            exceptions.append(
+                {
+                    "Exception Type": "SSO not found in UCMOD4",
+                    "Roster Name": row["Roster Name"],
+                    "SSO": sso,
+                    "Official Maximo Name": "",
+                    "Details": (
+                        "The roster SSO was not found in the official "
+                        "UCMOD4 qualification report."
+                    ),
+                }
+            )
+            continue
+
+        matched_ssos.add(sso)
+        official_name = str(official_row["Technician Name"])
+
+        if normalized_name_tokens(row["Roster Name"]) != normalized_name_tokens(
+            official_name
+        ):
+            exceptions.append(
+                {
+                    "Exception Type": "Roster name differs from Maximo",
+                    "Roster Name": row["Roster Name"],
+                    "SSO": sso,
+                    "Official Maximo Name": official_name,
+                    "Details": (
+                        "The official Maximo name is used in the generated report."
+                    ),
+                }
+            )
+
+    exception_frame = pd.DataFrame(exceptions, columns=ROSTER_EXCEPTION_COLUMNS)
+    return matched_ssos, exception_frame, len(unique_roster)
+
+
+def write_dataframe(worksheet, dataframe):
+    worksheet.append(list(dataframe.columns))
+
+    for row in dataframe.itertuples(index=False, name=None):
+        worksheet.append(list(row))
+
+
+def format_table_sheet(worksheet, status_column="P"):
+    worksheet.freeze_panes = "A2"
+
+    header_fill = PatternFill("solid", fgColor="548235")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    for cell in worksheet[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    widths = {
+        "A": 15,
+        "B": 15,
+        "C": 15,
+        "D": 14,
+        "E": 31,
+        "F": 18,
+        "G": 20,
+        "H": 14,
+        "I": 18,
+        "J": 18,
+        "K": 19,
+        "L": 21,
+        "M": 44,
+        "N": 16,
+        "O": 16,
+        "P": 26,
+    }
+
+    for column, width in widths.items():
+        worksheet.column_dimensions[column].width = width
+
+    for row in worksheet.iter_rows(min_row=2):
+        if len(row) >= 16:
+            row[3].number_format = "@"
+            row[5].number_format = "m/d/yyyy"
+            row[8].number_format = "m/d/yyyy"
+            row[9].number_format = "m/d/yyyy"
+            row[11].number_format = "m/d/yyyy h:mm AM/PM"
+            row[12].alignment = Alignment(wrap_text=True, vertical="top")
+
+    if worksheet.max_row >= 2:
+        worksheet.auto_filter.ref = worksheet.dimensions
+
+        status_range = f"{status_column}2:{status_column}{worksheet.max_row}"
+        for status, (fill_color, font_color) in STATUS_STYLES.items():
+            worksheet.conditional_formatting.add(
+                status_range,
+                FormulaRule(
+                    formula=[f'${status_column}2="{status}"'],
+                    fill=PatternFill("solid", fgColor=fill_color),
+                    font=Font(color=font_color, bold=True),
+                ),
+            )
+
+
+def create_dashboard(workbook, tracker_data, report_name):
+    worksheet = workbook.active
+    worksheet.title = "Dashboard"
+    worksheet.sheet_view.showGridLines = False
+
+    worksheet["A1"] = "PM Qualification Activity Tracker"
+    worksheet["A1"].font = Font(size=20, bold=True, color="FFFFFF")
+    worksheet["A1"].fill = PatternFill("solid", fgColor="1F4E78")
+    worksheet.merge_cells("A1:D1")
+
+    worksheet["A2"] = f"{report_name} Annual PM Compliance"
+    worksheet["A2"].font = Font(size=12, bold=True)
+    worksheet.merge_cells("A2:D2")
+
+    worksheet["A4"] = "Metric"
+    worksheet["B4"] = "Count"
+
+    metrics = [
+        ("Total Cycles", len(tracker_data)),
+        (
+            "Good / Completed",
+            int((tracker_data["Cycle Result"] == "Good / Completed").sum()),
+        ),
+        ("Good", int((tracker_data["Cycle Result"] == "Good").sum())),
+        ("Due Soon", int((tracker_data["Cycle Result"] == "Due Soon").sum())),
+        (
+            "Requalification Needed",
+            int(
+                (
+                    tracker_data["Cycle Result"]
+                    == "Requalification Needed"
+                ).sum()
+            ),
+        ),
+        (
+            "Task Data Missing",
+            int((tracker_data["Cycle Result"] == "Task Data Missing").sum()),
+        ),
+    ]
+
+    for row_number, (label, value) in enumerate(metrics, start=5):
+        worksheet.cell(row=row_number, column=1, value=label)
+        worksheet.cell(row=row_number, column=2, value=value)
+        worksheet.cell(row=row_number, column=1).font = Font(bold=True)
+        worksheet.cell(row=row_number, column=2).font = Font(bold=True, size=14)
+
+        if label in STATUS_STYLES:
+            fill_color, font_color = STATUS_STYLES[label]
+            worksheet.cell(row=row_number, column=1).fill = PatternFill(
+                "solid", fgColor=fill_color
+            )
+            worksheet.cell(row=row_number, column=1).font = Font(
+                bold=True, color=font_color
+            )
+
+    worksheet["A12"] = "Processing Date"
+    worksheet["B12"] = TODAY.to_pydatetime()
+    worksheet["B12"].number_format = "m/d/yyyy"
+
+    worksheet["A14"] = (
+        "Each PM counts only for the annual cycle in which it was completed."
+    )
+    worksheet["A14"].font = Font(italic=True, color="666666")
+    worksheet.merge_cells("A14:F14")
+
+    worksheet.column_dimensions["A"].width = 32
+    worksheet.column_dimensions["B"].width = 18
+    worksheet.column_dimensions["C"].width = 18
+    worksheet.column_dimensions["D"].width = 18
+
+
+def create_exceptions_sheet(workbook, tracker_data):
+    worksheet = workbook.create_sheet("Exceptions")
+
+    exceptions = tracker_data[
+        (tracker_data["Cycle Result"] == "Task Data Missing")
+        | (tracker_data["Qualification Status"] != "ACTIVE")
+    ][DISPLAY_COLUMNS].copy()
+
+    if exceptions.empty:
+        worksheet["A1"] = "No cycle or qualification exceptions found."
+        worksheet["A1"].font = Font(bold=True)
+        return
+
+    write_dataframe(worksheet, exceptions)
+    format_table_sheet(worksheet)
+
+
+def create_roster_exceptions_sheet(workbook, roster_exceptions):
+    worksheet = workbook.create_sheet("Roster Exceptions")
+
+    if roster_exceptions.empty:
+        worksheet["A1"] = "No Animation roster exceptions found."
+        worksheet["A1"].font = Font(bold=True)
+        return
+
+    write_dataframe(worksheet, roster_exceptions)
+    worksheet.freeze_panes = "A2"
+    worksheet.auto_filter.ref = worksheet.dimensions
+
+    for cell in worksheet[1]:
+        cell.fill = PatternFill("solid", fgColor="C65911")
+        cell.font = Font(color="FFFFFF", bold=True)
+
+    worksheet.column_dimensions["A"].width = 32
+    worksheet.column_dimensions["B"].width = 28
+    worksheet.column_dimensions["C"].width = 14
+    worksheet.column_dimensions["D"].width = 31
+    worksheet.column_dimensions["E"].width = 65
+
+    for row in worksheet.iter_rows(min_row=2):
+        row[2].number_format = "@"
+        row[4].alignment = Alignment(wrap_text=True, vertical="top")
+
+
+def create_run_summary(
+    workbook,
+    tracker_data,
+    report_name,
+    roster_count=None,
+    matched_roster_count=None,
+):
+    worksheet = workbook.create_sheet("Run Summary")
+    worksheet.sheet_view.showGridLines = False
+
+    rows = [
+        ("Report", report_name),
+        ("Processing Date", TODAY.to_pydatetime()),
+        (
+            "Qualification Records",
+            tracker_data[["SSO", "Qualification"]].drop_duplicates().shape[0],
+        ),
+        ("Annual Cycle Records", len(tracker_data)),
+        ("Unique Technicians", tracker_data["SSO"].nunique()),
+        (
+            "Qualifications",
+            ", ".join(sorted(tracker_data["Qualification"].unique())),
+        ),
+        (
+            "Disciplines",
+            ", ".join(sorted(tracker_data["Discipline"].unique())),
+        ),
+    ]
+
+    if roster_count is not None:
+        rows.append(("Unique Animation Roster SSOs", roster_count))
+    if matched_roster_count is not None:
+        rows.append(("Matched Official UCMOD4 SSOs", matched_roster_count))
+
+    for row_number, (label, value) in enumerate(rows, start=1):
+        worksheet.cell(row=row_number, column=1, value=label)
+        worksheet.cell(row=row_number, column=2, value=value)
+        worksheet.cell(row=row_number, column=1).font = Font(bold=True)
+
+    worksheet["B2"].number_format = "m/d/yyyy"
+    worksheet.column_dimensions["A"].width = 34
+    worksheet.column_dimensions["B"].width = 60
+
+
+def create_tracker_workbook(
+    tracker_data,
+    report_name,
+    output_path,
+    roster_exceptions=None,
+    roster_count=None,
+    matched_roster_count=None,
+):
+    workbook = Workbook()
+    create_dashboard(workbook, tracker_data, report_name)
+
+    status_sheet = workbook.create_sheet("PM Status")
+    status_data = tracker_data[DISPLAY_COLUMNS].copy()
+    write_dataframe(status_sheet, status_data)
+    format_table_sheet(status_sheet)
+
+    create_exceptions_sheet(workbook, tracker_data)
+
+    if roster_exceptions is not None:
+        create_roster_exceptions_sheet(workbook, roster_exceptions)
+
+    create_run_summary(
+        workbook,
+        tracker_data,
+        report_name,
+        roster_count=roster_count,
+        matched_roster_count=matched_roster_count,
+    )
+
+    workbook.save(output_path)
+
+
+def main():
+        started = time.perf_counter()
+
+        print("=" * 70)
+        print("PM Qualification Activity Tracker - Excel Report Generator")
+        print("=" * 70)
+
+        try:
+            mapping = load_mapping()
+            qualifications = read_qualifications(mapping)
+
+            animation_ssos, roster_exceptions, roster_count = (
+                read_animation_roster(qualifications)
+            )
+
+            tasks, qualifications_with_tasks = read_tasks()
+            cycles = build_cycles(qualifications)
+
+            results = assign_tasks_to_cycles(
+                cycles,
+                tasks,
+                qualifications_with_tasks,
+            )
+
+            results, updated_history, history_stats = apply_cycle_history(
+                results
+            )
+
+        except Exception as error:
+            print(f"ERROR: {error}")
+            return 1
+
+        # Animation roster employees appear only in the Animation report.
+        # The Animation report evaluates only UCMOD4.
+        animation_data = results[
+            results["SSO"].astype(str).isin(animation_ssos)
+            & (results["Qualification"] == "UCMOD4")
+        ].copy()
+
+        animation_data["Venue"] = "Animation"
+
+        # Remove every Animation roster SSO completely from the normal reports.
+        standard_results = results[
+            ~results["SSO"].astype(str).isin(animation_ssos)
+        ].copy()
+
+        OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
+        standard_reports = {
+            "Wolf": standard_results[
+                standard_results["Venue"] == "Wolf"
+            ].copy(),
+            "Darkmoor": standard_results[
+                standard_results["Venue"] == "Darkmoor"
+            ].copy(),
+            "Unchained": standard_results[
+                standard_results["Venue"] == "Unchained"
+            ].copy(),
+        }
+
+        try:
+            for report_name, report_data in standard_reports.items():
+                filename = OUTPUT_FILES[report_name]
+
+                create_tracker_workbook(
+                    report_data,
+                    report_name,
+                    OUTPUT_FOLDER / filename,
+                )
+
+                print(
+                    f"Created: {filename} "
+                    f"({len(report_data):,} cycle rows)"
+                )
+
+            animation_filename = OUTPUT_FILES["Animation"]
+
+            create_tracker_workbook(
+                animation_data,
+                "Animation",
+                OUTPUT_FOLDER / animation_filename,
+                roster_exceptions=roster_exceptions,
+                roster_count=roster_count,
+                matched_roster_count=len(animation_ssos),
+            )
+
+            print(
+                f"Created: {animation_filename} "
+                f"({len(animation_data):,} cycle rows)"
+            )
+
+        except Exception as error:
+            print()
+            print(f"ERROR creating Excel reports: {error}")
+            print("Cycle history was not updated.")
+            return 1
+
+        # Save historical evidence only after all four workbooks succeed.
+        try:
+            save_cycle_history(updated_history)
+        except Exception as error:
+            print()
+            print(f"ERROR saving cycle history: {error}")
+            print(
+                "The Excel reports were created, but cycle history "
+                "was not updated."
+            )
+            return 1
+
+        print()
+        print("Cycle history")
+        print("-------------")
+
+        for label, value in history_stats.items():
+            print(f"{label}: {value:,}")
+
+        print()
+        print(f"Animation roster unique SSOs: {roster_count:,}")
+        print(
+            "Animation SSOs matched to UCMOD4: "
+            f"{len(animation_ssos):,}"
+        )
+        print(
+            f"Animation roster exceptions: "
+            f"{len(roster_exceptions):,}"
+        )
+        print(f"Output folder: {OUTPUT_FOLDER}")
+        print(
+            "Total processing time: "
+            f"{time.perf_counter() - started:,.1f} seconds"
+        )
+        print("Excel report generation completed successfully.")
+
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+================================================================================
+FILE: Scripts\task_report_inspector.py
+================================================================================
+
+from pathlib import Path
+import warnings
+
+from openpyxl import load_workbook
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+TASK_FOLDER = PROJECT_ROOT / "Input" / "Tasks"
+SUPPORTED_EXTENSIONS = {".xlsx", ".xlsm"}
+
+# Maximo-generated workbooks may not contain Excel's normal default style.
+# This warning does not affect the report data.
+warnings.filterwarnings(
+    "ignore",
+    message="Workbook contains no default style*",
+    category=UserWarning,
+)
+
+
+def get_task_files():
+    return sorted(
+        [
+            file_path
+            for file_path in TASK_FOLDER.iterdir()
+            if file_path.is_file()
+            and not file_path.name.startswith("~$")
+            and file_path.suffix.lower() in SUPPORTED_EXTENSIONS
+        ],
+        key=lambda file_path: file_path.name.lower(),
+    )
+
+
+def normalize_header(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def find_header_row(worksheet, maximum_rows=15):
+    """Find the Maximo header row instead of assuming it is row 1."""
+    for row_number, row in enumerate(
+        worksheet.iter_rows(min_row=1, max_row=maximum_rows, values_only=True),
+        start=1,
+    ):
+        headers = {
+            normalize_header(value): index
+            for index, value in enumerate(row)
+            if normalize_header(value)
+        }
+
+        if "Qualification" in headers and "Status" in headers:
+            return row_number, headers
+
+    return None, None
+
+
+def inspect_workbook(file_path):
+    print()
+    print("=" * 70)
+    print(f"File: {file_path.name}")
+    print("=" * 70)
+
+    workbook = load_workbook(file_path, read_only=True, data_only=True)
+
+    qualifications = set()
+    total_sheets = len(workbook.sheetnames)
+    sheets_with_task_data = 0
+    task_rows = 0
+    completed_rows = 0
+    first_header_row = None
+
+    for worksheet in workbook.worksheets:
+        worksheet.reset_dimensions()
+        header_row_number, headers = find_header_row(worksheet)
+
+        if headers is None:
+            continue
+
+        sheets_with_task_data += 1
+
+        if first_header_row is None:
+            first_header_row = header_row_number
+
+        qualification_index = headers["Qualification"]
+        status_index = headers["Status"]
+        highest_needed_index = max(qualification_index, status_index)
+
+        for row in worksheet.iter_rows(
+            min_row=header_row_number + 1,
+            values_only=True,
+        ):
+            if len(row) <= highest_needed_index:
+                continue
+
+            qualification = row[qualification_index]
+
+            if qualification is None:
+                continue
+
+            qualification = str(qualification).strip().upper()
+
+            if not qualification:
+                continue
+
+            qualifications.add(qualification)
+            task_rows += 1
+
+            status = row[status_index]
+
+            if status is not None and str(status).strip().upper() == "COMP":
+                completed_rows += 1
+
+    workbook.close()
+
+    print(f"Worksheets found: {total_sheets}")
+    print(f"Worksheets with task data: {sheets_with_task_data}")
+    print(f"First detected header row: {first_header_row or 'Not found'}")
+    print(f"Task rows found: {task_rows:,}")
+    print(f"COMP rows found: {completed_rows:,}")
+    print("Qualifications found:")
+
+    if qualifications:
+        for qualification in sorted(qualifications):
+            print(f"  - {qualification}")
+    else:
+        print("  None")
+
+
+def main():
+    task_files = get_task_files()
+
+    print("=" * 70)
+    print("PM Qualification Activity Tracker - Task Report Inspector")
+    print("=" * 70)
+    print(f"Task reports found: {len(task_files)}")
+
+    if not task_files:
+        print("No task reports are currently available.")
+        return
+
+    for file_path in task_files:
+        inspect_workbook(file_path)
+
+    print()
+    print("Task report inspection completed successfully.")
+
+
+if __name__ == "__main__":
+    main()
+
