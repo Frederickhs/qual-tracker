@@ -3,6 +3,7 @@ import re
 import sys
 import time
 from cycle_history import apply_cycle_history, save_cycle_history
+from line_schedule_reader import read_line_schedule
 
 import pandas as pd
 from openpyxl import Workbook
@@ -41,6 +42,7 @@ STATUS_STYLES = {
 
 DISPLAY_COLUMNS = [
     "Venue",
+    "Shift",
     "Discipline",
     "Qualification",
     "SSO",
@@ -191,6 +193,51 @@ def read_animation_roster(qualifications):
     return matched_ssos, exception_frame, len(unique_roster)
 
 
+def add_shift_to_results(results):
+    schedule, workbook_path, conflicting_ssos = read_line_schedule()
+
+    usable_schedule = schedule[
+        schedule["Shift Conflict"] != "Yes"
+    ].drop_duplicates(subset=["SSO"], keep="first")
+
+    shift_by_sso = usable_schedule.set_index("SSO")["Shift"].to_dict()
+
+    updated = results.copy()
+    updated["SSO"] = updated["SSO"].astype(str).str.strip()
+    updated["Shift"] = updated["SSO"].map(shift_by_sso)
+    updated["Shift"] = updated["Shift"].fillna("Shift Not Found")
+
+    if conflicting_ssos:
+        updated.loc[
+            updated["SSO"].isin(conflicting_ssos),
+            "Shift",
+        ] = "Shift Conflict"
+
+    stats = {
+        "Line Schedule technicians": int(schedule["SSO"].nunique()),
+        "Tracker technicians matched to a shift": int(
+            updated.loc[
+                updated["Shift"].isin(["1st", "2nd", "3rd"]),
+                "SSO",
+            ].nunique()
+        ),
+        "Tracker technicians with shift not found": int(
+            updated.loc[
+                updated["Shift"] == "Shift Not Found",
+                "SSO",
+            ].nunique()
+        ),
+        "Tracker technicians with shift conflict": int(
+            updated.loc[
+                updated["Shift"] == "Shift Conflict",
+                "SSO",
+            ].nunique()
+        ),
+    }
+
+    return updated, workbook_path, stats
+
+
 def write_dataframe(worksheet, dataframe):
     worksheet.append(list(dataframe.columns))
 
@@ -198,7 +245,7 @@ def write_dataframe(worksheet, dataframe):
         worksheet.append(list(row))
 
 
-def format_table_sheet(worksheet, status_column="P"):
+def format_table_sheet(worksheet, status_column="Q"):
     worksheet.freeze_panes = "A2"
 
     header_fill = PatternFill("solid", fgColor="548235")
@@ -211,34 +258,55 @@ def format_table_sheet(worksheet, status_column="P"):
 
     widths = {
         "A": 15,
-        "B": 15,
+        "B": 14,
         "C": 15,
-        "D": 14,
-        "E": 31,
-        "F": 18,
-        "G": 20,
-        "H": 14,
-        "I": 18,
+        "D": 15,
+        "E": 14,
+        "F": 31,
+        "G": 18,
+        "H": 20,
+        "I": 14,
         "J": 18,
-        "K": 19,
-        "L": 21,
-        "M": 44,
-        "N": 16,
+        "K": 18,
+        "L": 19,
+        "M": 21,
+        "N": 44,
         "O": 16,
-        "P": 26,
+        "P": 16,
+        "Q": 26,
     }
 
     for column, width in widths.items():
         worksheet.column_dimensions[column].width = width
 
+    headers = {
+        cell.value: cell.column
+        for cell in worksheet[1]
+        if cell.value is not None
+    }
+
     for row in worksheet.iter_rows(min_row=2):
-        if len(row) >= 16:
-            row[3].number_format = "@"
-            row[5].number_format = "m/d/yyyy"
-            row[8].number_format = "m/d/yyyy"
-            row[9].number_format = "m/d/yyyy"
-            row[11].number_format = "m/d/yyyy h:mm AM/PM"
-            row[12].alignment = Alignment(wrap_text=True, vertical="top")
+        if "SSO" in headers:
+            row[headers["SSO"] - 1].number_format = "@"
+
+        for date_header in [
+            "Qualification Date",
+            "Cycle Start Date",
+            "Cycle Due Date",
+        ]:
+            if date_header in headers:
+                row[headers[date_header] - 1].number_format = "m/d/yyyy"
+
+        if "PM Completion Date" in headers:
+            row[headers["PM Completion Date"] - 1].number_format = (
+                "m/d/yyyy h:mm AM/PM"
+            )
+
+        if "Task Description" in headers:
+            row[headers["Task Description"] - 1].alignment = Alignment(
+                wrap_text=True,
+                vertical="top",
+            )
 
     if worksheet.max_row >= 2:
         worksheet.auto_filter.ref = worksheet.dimensions
@@ -332,6 +400,7 @@ def create_exceptions_sheet(workbook, tracker_data):
     exceptions = tracker_data[
         (tracker_data["Cycle Result"] == "Task Data Missing")
         | (tracker_data["Qualification Status"] != "ACTIVE")
+        | (tracker_data["Shift"].isin(["Shift Not Found", "Shift Conflict"]))
     ][DISPLAY_COLUMNS].copy()
 
     if exceptions.empty:
@@ -474,6 +543,10 @@ def main():
                 results
             )
 
+            results, schedule_path, schedule_stats = add_shift_to_results(
+                results
+            )
+
         except Exception as error:
             print(f"ERROR: {error}")
             return 1
@@ -560,6 +633,13 @@ def main():
         print("-------------")
 
         for label, value in history_stats.items():
+            print(f"{label}: {value:,}")
+
+        print()
+        print("Line Schedule")
+        print("-------------")
+        print(f"Source: {schedule_path}")
+        for label, value in schedule_stats.items():
             print(f"{label}: {value:,}")
 
         print()

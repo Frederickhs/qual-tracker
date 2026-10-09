@@ -1,11 +1,11 @@
-# PM Qualification Activity Tracker
+﻿# PM Qualification Activity Tracker
 
 ## Detailed Project Record and Technical Plan
 
 **Project owner:** Frederick Herrera  
 **Primary source:** IBM Maximo  
 **Repository:** `https://github.com/Frederickhs/qual-tracker.git`  
-**Local repository:** `G:\Dev\Qual Tracker`  
+**Local repository:** `G:\Dev\Qual_Tracker`  
 **Default branch:** `main`  
 **Current implementation:** Local Python with Excel output  
 **Updated:** October 7, 2026
@@ -160,25 +160,25 @@ The Task Data Missing state protects the report from falsely labeling records wh
 Repository structure:
 
 ```text
-G:\Dev\Qual Tracker\
-├── .venv\
-├── Input\
-│   ├── Qualification\
-│   └── Tasks\
-├── Output\
-├── Archive\
-├── Config\
-│   └── qualification_mapping.csv
-├── Scripts\
-├── Tests\
-├── Documentation\
-├── Logs\
-├── .gitignore
-├── AGENTS.md
-├── CLAUDE.md
-├── README.md
-├── requirements.txt
-└── Run Qualification Tracker.bat
+G:\Dev\Qual_Tracker\
+â”œâ”€â”€ .venv\
+â”œâ”€â”€ Input\
+â”‚   â”œâ”€â”€ Qualification\
+â”‚   â””â”€â”€ Tasks\
+â”œâ”€â”€ Output\
+â”œâ”€â”€ Archive\
+â”œâ”€â”€ Config\
+â”‚   â””â”€â”€ qualification_mapping.csv
+â”œâ”€â”€ Scripts\
+â”œâ”€â”€ Tests\
+â”œâ”€â”€ Documentation\
+â”œâ”€â”€ Logs\
+â”œâ”€â”€ .gitignore
+â”œâ”€â”€ AGENTS.md
+â”œâ”€â”€ CLAUDE.md
+â”œâ”€â”€ README.md
+â”œâ”€â”€ requirements.txt
+â””â”€â”€ Run Qualification Tracker.bat
 ```
 
 Real Maximo inputs, generated outputs, logs, archives, virtual environments, Python cache, and Excel temporary files are excluded from Git.
@@ -205,7 +205,7 @@ Git 2.54.0.windows.1
 Project environment:
 
 ```text
-G:\Dev\Qual Tracker\.venv
+G:\Dev\Qual_Tracker\.venv
 ```
 
 Setup commands:
@@ -478,9 +478,9 @@ Planned archive structure:
 
 ```text
 Archive\YYYY-MM-DD_HHMM\
-├── Qualification\
-├── Tasks\
-└── Output\
+â”œâ”€â”€ Qualification\
+â”œâ”€â”€ Tasks\
+â””â”€â”€ Output\
 ```
 
 The first implementation should copy, not move, source and output files.
@@ -543,3 +543,4 @@ Avoid Dark Universe-specific logic in the processing engine.
 Instructions should be simple and step-by-step, but routine saves and tiny actions should be grouped into meaningful checkpoints.
 
 Do not assume missing business rules. Ask before changing logic.
+

@@ -1,4 +1,4 @@
-# AGENTS.md
+﻿# AGENTS.md
 
 ## Purpose
 
@@ -27,7 +27,7 @@ The final user must not need to edit Python, use VS Code, use Power Query, or en
 Expected local repository:
 
 ```text
-G:\Dev\Qual Tracker
+G:\Dev\Qual_Tracker
 ```
 
 Expected runtime:
@@ -350,9 +350,9 @@ Preferred behavior after a fully successful run:
 
 ```text
 Archive/YYYY-MM-DD_HHMM/
-├── Qualification/
-├── Tasks/
-└── Output/
+â”œâ”€â”€ Qualification/
+â”œâ”€â”€ Tasks/
+â””â”€â”€ Output/
 ```
 
 Copy input and output files. Do not move source files in the first implementation.
@@ -456,3 +456,4 @@ Add annual qualification cycle processor
 Fix Excel output compatibility
 Add automatic archive workflow
 ```
+
