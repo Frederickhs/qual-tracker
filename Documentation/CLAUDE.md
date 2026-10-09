@@ -24,14 +24,26 @@ Use the project virtual environment:
 .\.venv\Scripts\python.exe Scripts\qualification_reader.py
 .\.venv\Scripts\python.exe Scripts\completed_task_reader.py
 .\.venv\Scripts\python.exe Scripts\cycle_processor.py
+.\.venv\Scripts\python.exe Scripts\line_schedule_reader.py
 .\.venv\Scripts\python.exe Scripts\report_generator.py
 ```
 
+The double-click runner is `Run_Qualification_Tracker.bat`. It runs `archive_outputs.py`, then `report_generator.py`.
+
 Never assume `python` is on PATH.
+
+## Pipeline Overview
+
+`report_generator.py` is the entry point. It produces four workbooks: Wolf, Darkmoor, Unchained and Animation.
+
+- `cycle_processor.py` reads the mapping, qualification reports and task reports, builds annual cycles and assigns tasks to cycles.
+- `cycle_history.py` restores and saves completed-cycle evidence in `Data/cycle_history.csv`. History is saved only after all four workbooks succeed.
+- `line_schedule_reader.py` reads technician shifts from the Line Schedule workbook in the folder set by `Config/settings.json`. Results are `1st`, `2nd`, `3rd`, `Shift Not Found` or `Shift Conflict`.
+- Animation roster SSOs (`Input/Manual roster/Animation Roster.xlsx`) appear only in the Animation workbook, which evaluates UCMOD4 only. They are removed from the venue workbooks.
 
 ## Privacy
 
-Treat all files in Input, Output, Archive, and Logs as private employee data. Do not quote names, SSOs, dates, or task history in chat, commits, documentation, or test fixtures unless explicitly required for a private validation step.
+Treat all files in Input (including Manual roster and the Line Schedule), Output, Archive, Logs, and Data as private employee data. Do not quote names, SSOs, dates, or task history in chat, commits, documentation, or test fixtures unless explicitly required for a private validation step.
 
 Do not use real data to create repository test files. Use synthetic fixtures.
 
@@ -72,6 +84,8 @@ Task workbooks may contain thousands of worksheets and several qualifications. Q
 ## Excel Generation Warning
 
 Do not reintroduce openpyxl Table objects without a desktop Excel compatibility test. Previous Table/AutoFilter objects caused Excel to repair generated workbooks. Use ordinary cells, formatting, conditional formatting, freeze panes, and worksheet AutoFilter.
+
+In `report_generator.py`, `DISPLAY_COLUMNS` drives the PM Status and Exceptions sheets. Column widths and the status column letter (`Q`) in `format_table_sheet` are positional. Update them whenever columns are added or reordered. Date and text formats are looked up by header name.
 
 ## Change Workflow
 

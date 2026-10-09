@@ -1,129 +1,46 @@
 # PM Qualification Activity Tracker
 
-Local Python application for processing IBM Maximo qualification and task-status history exports into annual PM compliance reports.
+A local Python tool that turns IBM Maximo exports into annual PM (preventive maintenance) compliance workbooks. It shows, for every technician and qualification, whether each annual cycle has a completed PM, is coming due, or needs requalification.
 
-## What It Does
+Run it with a double-click. A normal monthly run needs no coding and no terminal.
 
-The tracker:
+## Contents
 
-- Reads all current qualification reports.
-- Reads every worksheet from all rolling one-year task reports.
-- Keeps only completed tasks with `Status = COMP`.
-- Matches technicians by SSO and qualification.
-- Creates annual cycles tied permanently to the original qualification date.
-- Assigns each PM task only to the cycle in which it was completed.
-- Displays the latest valid task in each cycle.
-- Calculates Good, Good / Completed, Due Soon, Requalification Needed, or Task Data Missing.
-- Generates one Excel workbook per venue.
+- [How it works](#how-it-works)
+- [Quick start](#quick-start)
+- [Input files](#input-files)
+- [Output workbooks](#output-workbooks)
+- [Business rules](#business-rules)
+- [Configuration](#configuration)
+- [Project structure](#project-structure)
+- [Diagnostic scripts](#diagnostic-scripts)
+- [Privacy](#privacy)
+- [Troubleshooting](#troubleshooting)
 
-## Generated Reports
-
-```text
-Output/Wolf Qualification Tracker.xlsx
-Output/Darkmoor Qualification Tracker.xlsx
-Output/Unchained Qualification Tracker.xlsx
-```
-
-Each workbook contains:
-
-- Dashboard
-- PM Status
-- Exceptions
-- Run Summary
-
-## Tracked Qualifications
-
-### Darkmoor
-
-- DUMOD1: Effects
-
-### Wolf
-
-- CUMOD1: RVs
-- CUMOD2: Controls
-- CUMOD3: Track
-
-### Unchained
-
-- UCMOD1: RVs
-- UCMOD2: Controls
-- UCMOD3: Track
-- UCMOD4: Animation
-
-The following Mod 0 safety qualifications are excluded:
+## How it works
 
 ```text
-DUMOD0
-CUMOD0
-UCMOD0
+Qualification reports ─┐
+Task history reports ──┼─► match by SSO + qualification ─► annual cycles ─► Excel workbooks
+Animation roster ──────┤                                       │
+Line Schedule ─────────┘                              Data/cycle_history.csv
+                                                      (permanent evidence)
 ```
 
-## Business Rules
+1. Reads one qualification report per tracked qualification and takes each technician's original qualification date.
+2. Builds annual cycles from that date, up to today.
+3. Reads every worksheet in every task report and keeps only `Status = COMP` rows.
+4. Matches tasks to technicians by SSO and qualification code. Names are display-only.
+5. Assigns each task to the one cycle that contains its completion date.
+6. Restores completed cycles from saved history if a task has dropped out of the rolling one-year export.
+7. Adds each technician's shift from the Line Schedule.
+8. Writes one workbook per venue, plus one for Animation.
 
-A PM task counts when:
+## Quick start
 
-- `Status = COMP`
-- Task SSO matches qualification Labor/SSO
-- Task qualification matches the technician qualification
-- Completion date falls inside the applicable annual cycle
+**Requirements:** Windows, Python 3.14, pandas 3.0.6, openpyxl 3.1.5.
 
-Cycles remain tied to the original qualification Effective Date.
-
-Example:
-
-```text
-Qualification Date: 2025-06-03
-Cycle 1: 2025-06-03 through 2026-06-03
-Cycle 2: 2026-06-03 through 2027-06-03
-Cycle 3: 2027-06-03 through 2028-06-03
-```
-
-A task counts only in its own cycle. It does not carry into another cycle.
-
-Status rules:
-
-```text
-Valid PM exists                         Good / Completed
-No PM and deadline passed               Requalification Needed
-No PM and 30 or fewer days remain       Due Soon
-No PM and more than 30 days remain      Good
-Task report unavailable                 Task Data Missing
-```
-
-## Repository Structure
-
-```text
-Qual Tracker/
-├── Input/
-│   ├── Qualification/
-│   └── Tasks/
-├── Output/
-├── Archive/
-├── Config/
-├── Scripts/
-├── Tests/
-├── Documentation/
-├── Logs/
-├── .gitignore
-├── AGENTS.md
-├── CLAUDE.md
-├── README.md
-├── requirements.txt
-└── Run Qualification Tracker.bat
-```
-
-Real Maximo reports, generated workbooks, logs, archives, and the virtual environment are excluded from Git.
-
-## Requirements
-
-- Windows
-- Python 3.14.x
-- pandas 3.0.6
-- openpyxl 3.1.5
-
-## Initial Setup
-
-From the repository root:
+### One-time setup
 
 ```powershell
 py -m venv .venv
@@ -131,174 +48,184 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-Verify:
+### Monthly run
 
-```powershell
-.\.venv\Scripts\python.exe -c "import pandas; import openpyxl; print('Python environment is ready')"
-```
+1. Download the current Maximo reports as `.xlsx`.
+2. Put qualification reports in `Input/Qualification/`.
+3. Put task history reports in `Input/Tasks/`.
+4. Close every Excel workbook, including the previous outputs.
+5. Double-click **`Run_Qualification_Tracker.bat`**.
 
-## Input Files
+The runner works in two steps:
 
-### Qualification reports
+1. Moves the previous workbooks to `Archive/<timestamp>/Output/`. If any file is locked, it stops and puts everything back.
+2. Generates the new workbooks and opens `Output/`.
 
-Place all qualification reports in:
+Your input files are never modified.
 
-```text
-Input/Qualification
-```
-
-Qualification filenames must contain the exact qualification code:
-
-```text
-DUMOD1 Qualification.xlsx
-CUMOD1 Qualification.xlsx
-CUMOD2 Qualification.xlsx
-CUMOD3 Qualification.xlsx
-UCMOD1 Qualification.xlsx
-UCMOD2 Qualification.xlsx
-UCMOD3 Qualification.xlsx
-UCMOD4 Qualification.xlsx
-```
-
-Do not infer qualification from Work Location.
-
-### Task reports
-
-Place all rolling one-year task-history reports in:
-
-```text
-Input/Tasks
-```
-
-Task filenames can remain as downloaded from Maximo. The tracker uses the internal `Qualification` column.
-
-A task file can contain one or several qualifications. Multiple files for the same venue are supported.
-
-Close all source workbooks before running the tracker so temporary `~$` files are not created.
-
-## Run the Current Generator
+To run the generator directly:
 
 ```powershell
 .\.venv\Scripts\python.exe Scripts\report_generator.py
 ```
 
-Generated workbooks appear in:
+## Input files
+
+| Input | Location | Notes |
+|---|---|---|
+| Qualification reports | `Input/Qualification/` | One file per qualification. The filename must contain exactly one code, e.g. `CUMOD1 Qualification.xlsx`. The sheet is `List of Labor`. |
+| Task history reports | `Input/Tasks/` | Any filename. Can hold one or several qualifications, and a qualification can span several files. Every worksheet is read. |
+| Animation roster | `Input/Manual roster/Animation Roster.xlsx` | Columns `Name` and `ID` (the SSO). |
+| Line Schedule | Folder set in `Config/settings.json` | Exactly one `.xlsx` in that folder. |
+
+**Qualification report columns:** `Labor`, `Name`, `Effective Date`, `Status`.
+
+**Task report columns:** `Task Num`, `Status`, `Changed Date`, `Change By`, `Name`, `Qualification`. The task description is read from the first column.
+
+**Line Schedule sheets:** `1st Shift`, `2nd Shift`, `3rd Shift Unchained`, `3rd Shift Wolf`. Data starts on row 4. Column A is the name and column D is the SSO.
+
+Qualification is never inferred from Work Location. Files with `MOD0` in the name are ignored.
+
+## Output workbooks
+
+Written to `Output/`:
+
+- `Wolf Qualification Tracker.xlsx`
+- `Darkmoor Qualification Tracker.xlsx`
+- `Unchained Qualification Tracker.xlsx`
+- `Animation Qualification Tracker.xlsx`
+
+Animation roster technicians appear **only** in the Animation workbook, which evaluates UCMOD4 only. They are removed from the venue workbooks.
+
+| Sheet | Contents |
+|---|---|
+| Dashboard | Counts per cycle result and the processing date |
+| PM Status | One row per technician, qualification and cycle |
+| Exceptions | Task Data Missing cycles, non-ACTIVE qualifications, and technicians whose shift is not found or in conflict |
+| Roster Exceptions | Animation workbook only: blank, duplicate or unmatched roster SSOs and name mismatches |
+| Run Summary | Record counts, qualifications and disciplines |
+
+**PM Status columns:** Venue, Shift, Discipline, Qualification, SSO, Technician Name, Qualification Date, Qualification Status, Cycle Number, Cycle Start Date, Cycle Due Date, Task Data Available, PM Completion Date, Task Description, Task Number, Days Remaining, Cycle Result.
+
+**Shift** is `1st`, `2nd` or `3rd`. It is `Shift Not Found` if the technician is not on the schedule, and `Shift Conflict` if they appear on more than one shift.
+
+## Business rules
+
+### Valid PM
+
+A task counts only if all of these are true:
+
+- `Status` is `COMP`.
+- The task's `Change By` SSO matches the qualification's `Labor` SSO.
+- The task's qualification code matches.
+- The completion date falls inside the cycle, inclusive of both boundaries.
+
+Any single qualifying task counts. A complete work order is not required. If a cycle has several valid tasks, the latest is shown.
+
+### Annual cycles
+
+Cycles stay anchored to the original qualification date. Cycle 1 is generated, and every later cycle once it has started.
 
 ```text
-Output
+Qualification date: 2025-06-03
+Cycle 1: 2025-06-03 → 2026-06-03
+Cycle 2: 2026-06-03 → 2027-06-03
+Cycle 3: 2027-06-03 → 2028-06-03
 ```
 
-The final target is to run the same process by double-clicking:
+A PM counts only in its own cycle. It never carries forward or repairs a missed cycle.
 
-```text
-Run Qualification Tracker.bat
-```
+### Cycle result
 
-## Diagnostic Scripts
+| Condition | Result |
+|---|---|
+| Valid PM exists | Good / Completed |
+| No PM, past the due date | Requalification Needed |
+| No PM, 30 days or fewer remaining | Due Soon |
+| No PM, more than 30 days remaining | Good |
+| No task report for that qualification | Task Data Missing |
 
-Scan input files:
+### Cycle history
 
-```powershell
-.\.venv\Scripts\python.exe Scripts\input_scanner.py
-```
-
-Inspect task qualification coverage:
-
-```powershell
-.\.venv\Scripts\python.exe Scripts\task_report_inspector.py
-```
-
-Validate qualification reports:
-
-```powershell
-.\.venv\Scripts\python.exe Scripts\qualification_reader.py
-```
-
-Read completed tasks:
-
-```powershell
-.\.venv\Scripts\python.exe Scripts\completed_task_reader.py
-```
-
-Generate cycle validation CSV files:
-
-```powershell
-.\.venv\Scripts\python.exe Scripts\cycle_processor.py
-```
-
-## Verified DUMOD1 Reference
-
-With the full-year DUMOD1 report and processing date October 7, 2026:
-
-```text
-Total Cycles: 59
-Good / Completed: 27
-Good: 16
-Due Soon: 3
-Requalification Needed: 13
-Task Data Missing: 0
-```
-
-Python source validation confirmed a Cycle 2 task that the earlier Power Query prototype missed. Python is the authoritative processing path.
-
-## Privacy
-
-This project handles employee names, SSOs, qualification dates, and task activity.
-
-Never commit:
-
-- Maximo input reports
-- Generated output workbooks
-- Logs or validation CSV files
-- Archives
-- Employee names or SSOs in tests
-- `.venv`
-
-Use synthetic data for tests and examples.
+Maximo task exports cover a rolling year, so old evidence ages out. Completed cycles are saved to `Data/cycle_history.csv`. On later runs a saved completion is restored (shown as `Historical Evidence`) unless a newer one is found in the source data. Only `Good / Completed` cycles are stored. Every other result is recalculated on each run. The file is saved only after all four workbooks are created successfully.
 
 ## Configuration
 
-Qualification mappings are stored in:
+**`Config/qualification_mapping.csv`** defines what is tracked. Add areas, venues and qualifications here rather than in code.
 
-```text
-Config/qualification_mapping.csv
+| Venue | Qualification | Discipline | Tracked |
+|---|---|---|---|
+| Darkmoor | DUMOD1 | Effects | Yes |
+| Wolf | CUMOD1 / CUMOD2 / CUMOD3 | RVs / Controls / Track | Yes |
+| Unchained | UCMOD1 / UCMOD2 / UCMOD3 / UCMOD4 | RVs / Controls / Track / Animation | Yes |
+| All | DUMOD0 / CUMOD0 / UCMOD0 | Safety | No |
+
+**`Config/settings.json`** points to the Line Schedule folder:
+
+```json
+{
+  "line_schedule_folder": "C:\\path\\to\\Line Schedule"
+}
 ```
 
-Add new areas, venues, qualifications, and disciplines through configuration rather than hardcoding them in processing logic.
+Set this to a folder on your machine that holds the schedule workbook.
 
-## Current Status
-
-Completed:
-
-- Repository and virtual environment
-- Input scanning
-- Multi-sheet Maximo task inspection
-- Qualification reader
-- Completed-task reader
-- Annual cycle processor
-- Separate venue report generation
-- Missing-task-data protection
-- DUMOD1 source validation
-- Excel compatibility fix
-
-Remaining:
-
-- Obtain UCMOD1 task report
-- Complete Unchained validation
-- Commit final report generator
-- Add synthetic automated tests
-- Add automatic archiving
-- Finish the BAT runner
-- Complete final documentation and release testing
-
-## Agent Instructions
-
-Coding agents should read:
+## Project structure
 
 ```text
-AGENTS.md
-CLAUDE.md
-.github/copilot-instructions.md
+Qual_Tracker/
+├── Run_Qualification_Tracker.bat   Double-click runner
+├── Config/                         Qualification mapping and settings
+├── Input/
+│   ├── Qualification/              Maximo qualification reports
+│   ├── Tasks/                      Maximo task history reports
+│   └── Manual roster/              Animation roster
+├── Scripts/
+│   ├── report_generator.py         Main entry point: builds the workbooks
+│   ├── cycle_processor.py          Reads inputs, builds cycles, assigns tasks
+│   ├── cycle_history.py            Saves and restores completed-cycle evidence
+│   ├── line_schedule_reader.py     Reads technician shifts
+│   └── archive_outputs.py          Archives previous workbooks
+├── Output/                         Generated workbooks
+├── Archive/                        Timestamped copies of earlier outputs
+├── Data/                           Permanent cycle history
+├── Logs/                           Diagnostic CSVs
+├── Documentation/                  Project record and coding-agent instructions
+└── Tests/
 ```
 
-`AGENTS.md` is the authoritative repository instruction file.
+## Diagnostic scripts
+
+Run any of these with `.\.venv\Scripts\python.exe Scripts\<name>.py`:
+
+| Script | Purpose |
+|---|---|
+| `input_scanner.py` | Lists input files and validates folders and configuration |
+| `task_report_inspector.py` | Shows which qualifications each task report covers |
+| `qualification_reader.py` | Validates the qualification reports |
+| `completed_task_reader.py` | Reads and summarizes completed tasks |
+| `cycle_processor.py` | Writes cycle validation CSVs to `Logs/` |
+| `line_schedule_reader.py` | Validates the Line Schedule and reports shift conflicts |
+
+## Privacy
+
+This project handles employee names, SSOs, qualification dates and maintenance activity. These are never committed:
+
+- `Input/Qualification/*` and `Input/Tasks/*`
+- `Input/Manual roster/*`
+- `Output/*`, `Archive/*`, `Logs/*`, `Data/*`
+- `.venv/`
+
+Use synthetic data in tests, issues and examples.
+
+## Troubleshooting
+
+| Message | Fix |
+|---|---|
+| A previous output workbook is open or locked | Close all four output workbooks, then run again. |
+| Missing qualification reports: … | Add the file named in the message to `Input/Qualification/`. |
+| qualification code was not found in filename | Rename the file so it contains one approved code. |
+| More than one Line Schedule workbook was found | Leave exactly one `.xlsx` in the schedule folder. |
+| Line Schedule folder not found | Fix `line_schedule_folder` in `Config/settings.json`. |
+| Task Data Missing in a report | There is no task report covering that qualification. Add one. |
+| Project Python environment was not found | Complete the one-time setup above. |
